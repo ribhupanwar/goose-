@@ -43,6 +43,12 @@ jobs:
           echo "Found project at: $PROJECT_FILE"
           ls -la "$SOURCE_ROOT"
 
+      - name: Diagnose WHOOP 5.0 historical sync implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/patches/diagnose-whoop5-historical-sync.py" "$GOOSE_SOURCE_ROOT" | tee "$RUNNER_TEMP/whoop5-sync-diagnostics.txt"
+
       - name: Configure Apple Health permissions
         shell: bash
         run: |
