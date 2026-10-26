@@ -1,9 +1,105 @@
-
 name: Build Goose iOS IPA (Sideload)
 
-on:
+"on":
   workflow_dispatch:
   push:
     branches:
       - main
 
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Extract Goose source ZIP if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -f "goose-main.zip" ]]; then
+            mkdir -p "$RUNNER_TEMP/goose-source"
+            /usr/bin/ditto -x -k "goose-main.zip" "$RUNNER_TEMP/goose-source"
+          else
+            mkdir -p "$RUNNER_TEMP/goose-source"
+            /usr/bin/ditto "$GITHUB_WORKSPACE" "$RUNNER_TEMP/goose-source"
+          fi
+
+          PROJECT_FILE="$(find "$RUNNER_TEMP/goose-source" -name 'GooseSwift.xcodeproj' -type d -print -quit)"
+          if [[ -z "$PROJECT_FILE" ]]; then
+            echo "::error::Could not find GooseSwift.xcodeproj. Check that goose-main.zip contains the extracted project files."
+            find "$RUNNER_TEMP/goose-source" -maxdepth 4 -print | head -200
+            exit 1
+          fi
+
+          SOURCE_ROOT="$(dirname "$PROJECT_FILE")"
+          echo "GOOSE_SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
+          echo "Found project at: $PROJECT_FILE"
+          ls -la "$SOURCE_ROOT"
+
+      - name: Select Xcode and show SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -showsdks | grep -E 'iOS' || true
+          xcode-select -p
+
+      - name: Install Rust and iOS device target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Check project files and scheme
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$GOOSE_SOURCE_ROOT/GooseSwift.xcodeproj"
+          test -f "$GOOSE_SOURCE_ROOT/Scripts/build_ios_rust.sh"
+          test -f "$GOOSE_SOURCE_ROOT/Rust/core/Cargo.toml"
+          chmod +x "$GOOSE_SOURCE_ROOT/Scripts/build_ios_rust.sh"
+          xcodebuild -list -project "$GOOSE_SOURCE_ROOT/GooseSwift.xcodeproj"
+
+      - name: Build for physical iPhone (unsigned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "$GOOSE_SOURCE_ROOT/GooseSwift.xcodeproj" \
+            -scheme GooseSwift \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/goose-derived-data" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/goose-derived-data/Build/Products/Release-iphoneos/GooseSwift.app"
+          if [[ ! -d "$APP_PATH" ]]; then
+            echo "::error::GooseSwift.app not found at expected build output."
+            find "$RUNNER_TEMP/goose-derived-data/Build/Products" -maxdepth 4 -print || true
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/GooseSwift.app"
+          (cd "$RUNNER_TEMP/ipa" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/GooseSwift-unsigned.ipa" Payload)
+          shasum -a 256 "$GITHUB_WORKSPACE/GooseSwift-unsigned.ipa"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GooseSwift-unsigned-IPA
+          path: GooseSwift-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
