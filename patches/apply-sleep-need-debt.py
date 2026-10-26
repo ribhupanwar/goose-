@@ -81,12 +81,12 @@ replace_once(
     let snapshot = await HealthKitTrainingSnapshot(''',
 "sleep history query")
 
-replace_once(
-'''      activeEnergyKilocaloriesToday: energy,
-      sleepMinutes: sleep, source: "Apple Health"''',
-'''      activeEnergyKilocaloriesToday: energy,
-      sleepMinutes: sleep, sleepHistory: nights, source: "Apple Health"''',
-"snapshot sleep history assignment")
+if "sleepHistory: nights" not in s:
+    marker = "sleepMinutes: sleep"
+    if marker not in s:
+        start = s.find("let snapshot = await HealthKitTrainingSnapshot(")
+        raise SystemExit("Sleep history initializer anchor missing; nearby source: " + s[start:start + 700])
+    s = s.replace(marker, marker + ", sleepHistory: nights", 1)
 
 replace_once(
 '''  private static func sleepMinutes(_ store: HKHealthStore, _ now: Date) async -> Double? {''',
