@@ -31,8 +31,17 @@ jobs:
           python3 patches/apply-healthkit-baselines.py "$SOURCE_ROOT"
           python3 patches/apply-recovery-engine.py "$SOURCE_ROOT"
           python3 patches/apply-sleep-need-debt.py "$SOURCE_ROOT"
+          python3 patches/diagnose-whoop-live-hr.py "$SOURCE_ROOT"
           echo "GOOSE_SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
           echo "Patched source: $SOURCE_ROOT"
+
+      - name: Upload WHOOP live HR diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: WHOOP-live-HR-diagnostics
+          path: whoop-live-hr-diagnostics.txt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Select Xcode and show SDK
         run: |
