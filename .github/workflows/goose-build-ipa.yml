@@ -1,1 +1,9 @@
 
+name: Build Goose iOS IPA (Sideload)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
