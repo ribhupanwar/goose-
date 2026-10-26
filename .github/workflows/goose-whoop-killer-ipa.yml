@@ -26,6 +26,7 @@ jobs:
           SOURCE_ROOT="$(find "$RUNNER_TEMP/goose-source" -name 'GooseSwift.xcodeproj' -type d -print -quit | xargs dirname)"
           test -n "$SOURCE_ROOT"
           python3 patches/apply-healthkit-training-signals.py "$SOURCE_ROOT"
+          python3 patches/fix-healthkit-interpolation.py "$SOURCE_ROOT"
           echo "GOOSE_SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
           echo "Patched source: $SOURCE_ROOT"
 
