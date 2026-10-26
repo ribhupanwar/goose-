@@ -1,0 +1,78 @@
+name: Build Goose WHOOP-killer IPA
+
+"on":
+  workflow_dispatch:
+  push:
+    branches:
+      - "whoop-killer/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Extract source and apply HealthKit upgrade
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/goose-source"
+          /usr/bin/ditto -x -k "goose-main.zip" "$RUNNER_TEMP/goose-source"
+          SOURCE_ROOT="$(find "$RUNNER_TEMP/goose-source" -name 'GooseSwift.xcodeproj' -type d -print -quit | xargs dirname)"
+          test -n "$SOURCE_ROOT"
+          python3 patches/apply-healthkit-training-signals.py "$SOURCE_ROOT"
+          echo "GOOSE_SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
+          echo "Patched source: $SOURCE_ROOT"
+
+      - name: Select Xcode and show SDK
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -showsdks | grep -E 'iOS' || true
+
+      - name: Install Rust and iOS device target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Check project and scheme
+        run: |
+          set -euo pipefail
+          chmod +x "$GOOSE_SOURCE_ROOT/Scripts/build_ios_rust.sh"
+          xcodebuild -list -project "$GOOSE_SOURCE_ROOT/GooseSwift.xcodeproj"
+
+      - name: Build for physical iPhone (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "$GOOSE_SOURCE_ROOT/GooseSwift.xcodeproj" \
+            -scheme GooseSwift \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/goose-derived-data" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/goose-derived-data/Build/Products/Release-iphoneos/GooseSwift.app"
+          test -d "$APP_PATH"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/GooseSwift.app"
+          (cd "$RUNNER_TEMP/ipa" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/GooseSwift-WHOOP-killer-unsigned.ipa" Payload)
+          shasum -a 256 "$GITHUB_WORKSPACE/GooseSwift-WHOOP-killer-unsigned.ipa"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Goose-WHOOP-killer-unsigned-IPA
+          path: GooseSwift-WHOOP-killer-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
