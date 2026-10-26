@@ -21,13 +21,10 @@ with entitlements.open("wb") as f:
 text = project.read_text()
 setting = "CODE_SIGN_ENTITLEMENTS = GooseSwift/GooseSwift.entitlements;"
 if setting not in text:
-    # Apply to every target configuration; the GooseSwift app is the only app target
-    # in this project and all configurations must use the same entitlement file.
-    pattern = r"(buildSettings = \\{)"
-    matches = list(re.finditer(pattern, text))
-    if not matches:
+    marker = "buildSettings = {"
+    if marker not in text:
         raise SystemExit("No Xcode build settings blocks found")
-    text = re.sub(pattern, r"\\1\n\\t\\t\\t\\t" + setting, text)
+    text = text.replace(marker, marker + "\\n\\t\\t\\t\\t" + setting)
 project.write_text(text)
 
 info = root / "GooseSwift" / "Info.plist"
