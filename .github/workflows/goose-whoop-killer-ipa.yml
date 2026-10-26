@@ -31,6 +31,7 @@ jobs:
           python3 patches/apply-healthkit-baselines.py "$SOURCE_ROOT"
           python3 patches/apply-recovery-engine.py "$SOURCE_ROOT"
           python3 patches/apply-sleep-need-debt.py "$SOURCE_ROOT"
+          python3 patches/fix-whoop-v5-historical-routing.py "$SOURCE_ROOT"
           python3 patches/diagnose-whoop-live-hr.py "$SOURCE_ROOT"
           echo "GOOSE_SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
           echo "Patched source: $SOURCE_ROOT"
