@@ -43,6 +43,12 @@ jobs:
           echo "Found project at: $PROJECT_FILE"
           ls -la "$SOURCE_ROOT"
 
+      - name: Fix WHOOP 5.0 historical packet dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/patches/fix-whoop5-historical-packet-dispatch.py" "$GOOSE_SOURCE_ROOT"
+
       - name: Diagnose WHOOP 5.0 historical sync implementation
         shell: bash
         run: |
