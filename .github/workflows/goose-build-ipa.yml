@@ -43,6 +43,14 @@ jobs:
           echo "Found project at: $PROJECT_FILE"
           ls -la "$SOURCE_ROOT"
 
+      - name: Configure Apple Health permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/patches/ensure-healthkit-capability.py" "$GOOSE_SOURCE_ROOT"
+          grep -n "CODE_SIGN_ENTITLEMENTS" "$GOOSE_SOURCE_ROOT/GooseSwift.xcodeproj/project.pbxproj"
+          /usr/libexec/PlistBuddy -c "Print :com.apple.developer.healthkit" "$GOOSE_SOURCE_ROOT/GooseSwift/GooseSwift.entitlements"
+
       - name: Select Xcode and show SDK
         shell: bash
         run: |
