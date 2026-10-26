@@ -83,7 +83,7 @@ replace_once(
 
 replace_once(
 '''      activeEnergyKilocaloriesToday: energy,
-      sleepMinutes: sleep, source: "Apple Health"''',
+      sleepMinutes: sleep, sleepHistory: nights, source: "Apple Health"''',
 '''      activeEnergyKilocaloriesToday: energy,
       sleepMinutes: sleep, sleepHistory: nights, source: "Apple Health"''',
 "snapshot sleep history assignment")
