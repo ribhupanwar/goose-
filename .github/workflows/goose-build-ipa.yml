@@ -9,6 +9,10 @@ name: Build Goose iOS IPA (Sideload)
 permissions:
   contents: read
 
+concurrency:
+  group: goose-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-ipa:
     runs-on: macos-26
