@@ -61,13 +61,10 @@ commands.write_text(c)
 
 central = one("GooseBLEClient+CentralDelegate.swift")
 d = central.read_text()
-reset_anchor = """    clientHelloSentForCurrentConnection = false
-    autoReconnectInFlight = false
+reset_anchor = """    clientHelloBootstrapScheduledForCurrentConnection = false
+    clientHelloResponseTimeoutWorkItem = nil
 """
-reset_replacement = """    clientHelloSentForCurrentConnection = false
-    v5NotificationRegistrationScheduled.removeAll()
-    autoReconnectInFlight = false
-"""
+reset_replacement = reset_anchor + "    v5NotificationRegistrationScheduled.removeAll()\\n"
 if reset_replacement not in d:
     if d.count(reset_anchor) != 1:
         raise SystemExit("Could not locate per-connection notification registration reset.")
