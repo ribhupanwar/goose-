@@ -1,4 +1,4 @@
-// Goose readiness calibration, inspired by published robust-statistics practice.
+// Goose readiness calibration, methodology informed by OpenStrap analytics readiness design (AGPL-3.0).
 // Independent Swift implementation; no OpenStrap source code is copied.
 import Foundation
 
@@ -29,7 +29,7 @@ enum HealthKitReadinessCalibration {
     let nights = history.count
     var result: Result
     if nights < minimumNights {
-      let x = z.clamped(to: -20...20)
+      let x = min(max(z, -20.0), 20.0)
       let value = 100 / (1 + exp(-x))
       result = Result(score: value, status: "Calibrating", nights: nights)
     } else {
@@ -37,8 +37,8 @@ enum HealthKitReadinessCalibration {
       let centerRaw = median(prior) ?? 0
       let deviations = prior.map { abs($0 - centerRaw) }
       let sigma = max(sigmaFloor, (median(deviations) ?? 0) * 1.4826)
-      let center = centerRaw.clamped(to: -centreCap...centreCap)
-      let x = (designSigma * (z - center) / sigma).clamped(to: -20...20)
+      let center = min(max(centerRaw, -centreCap), centreCap)
+      let x = min(max(designSigma * (z - center) / sigma, -20.0), 20.0)
       let value = 100 / (1 + exp(-x))
       result = Result(score: value, status: "Calibrated", nights: nights)
     }
@@ -63,8 +63,3 @@ enum HealthKitReadinessCalibration {
   }
 }
 
-private extension Double {
-  func clamped(to range: ClosedRange<Double>) -> Double {
-    min(max(self, range.lowerBound), range.upperBound)
-  }
-}
