@@ -677,6 +677,7 @@ if method_match is None:
     candidates = [line for line in historical_source.splitlines() if "handleHistoricalSyncValue" in line]
     raise SystemExit("Could not locate historical sync handler declaration; candidates=" + repr(candidates))
 method_start = method_match.start()
+method_open = historical_source[method_start:method_match.end()]
 method_tail = historical_source[method_start:]
 # Channel filtering belongs in the notification dispatcher, not this handler.
 # Once routed here, command/event/data frames all need parsing.
