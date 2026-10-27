@@ -37,7 +37,7 @@ dispatch = """    // Gen5 command, event, and data channels can split frames acr
 if dispatch not in source:
     if source.count(guard) != 1:
         raise SystemExit("Could not uniquely locate notification dispatch guard.")
-    source = source.replace(guard, guard + dispatch, 1)
+    source = source.replace(guard, dispatch + guard, 1)
 peripheral.write_text(source)
 
 # A notification can end mid-frame. Keep a bounded, per-characteristic
@@ -534,7 +534,7 @@ dispatch_add = """    if (clientHelloSentForCurrentConnection
 if dispatch_add not in peripheral_source:
     if peripheral_source.count(dispatch_anchor) != 1:
         raise SystemExit("Could not locate notification dispatch guard for hello.")
-    peripheral_source = peripheral_source.replace(dispatch_anchor, dispatch_anchor + dispatch_add, 1)
+    peripheral_source = peripheral_source.replace(dispatch_anchor, dispatch_add + dispatch_anchor, 1)
 
 value_anchor = """    handleDebugCommandValue(value, characteristic: characteristic)
     handleHistoricalSyncValue(value, characteristic: characteristic)
