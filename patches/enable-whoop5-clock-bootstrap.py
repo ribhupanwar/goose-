@@ -29,9 +29,9 @@ reset_anchor = """    clientHelloBootstrapScheduledForCurrentConnection = false
 reset_replacement = reset_anchor + """    clientHelloClockBootstrapPending = false
 """
 if reset_replacement not in d:
-    if d.count(reset_anchor) != 1:
-        raise SystemExit("Could not locate Gen5 clock-bootstrap connection reset.")
-    d = d.replace(reset_anchor, reset_replacement, 1)
+    if d.count(reset_anchor) != 2:
+        raise SystemExit("Could not locate both Gen5 clock-bootstrap connection resets.")
+    d = d.replace(reset_anchor, reset_replacement)
 central.write_text(d)
 
 handlers = one("GooseBLEClient+HistoricalHandlers.swift")
