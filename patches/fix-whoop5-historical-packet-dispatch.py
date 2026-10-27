@@ -351,4 +351,335 @@ if test not in tests_source:
     tests_source = tests_source.replace(test_anchor, test + test_anchor, 1)
 tests.write_text(tests_source)
 
+# Match Edge's Gen5 bootstrap order: register the three required notify
+# channels first, then send GET_HELLO, validate its correlated response, and
+# only then permit history/sensor commands.
+client = one("GooseBLEClient.swift")
+client_source = client.read_text()
+hello_state_anchor = "  var clientHelloSentForCurrentConnection = false\\n"
+hello_state_replacement = hello_state_anchor + """  var clientHelloResponseConfirmedForCurrentConnection = false
+  var clientHelloResponseTimeoutWorkItem: DispatchWorkItem?
+"""
+if "var clientHelloResponseConfirmedForCurrentConnection = false" not in client_source:
+    if client_source.count(hello_state_anchor) != 1:
+        raise SystemExit("Could not uniquely locate client hello state.")
+    client_source = client_source.replace(hello_state_anchor, hello_state_replacement, 1)
+client.write_text(client_source)
+
+commands_file = one("GooseBLEClient+Commands.swift")
+commands_source = commands_file.read_text()
+discovery_anchor = """    if commandCharacteristic != nil {
+      updateConnectionState("ready")
+      sendClientHelloIfNeeded(reason: cached ? "cached_gatt" : "gatt_discovery")
+      scheduleDebugSkinTemperatureCommandIfNeeded(reason: cached ? "cached_ready" : "ready")
+      scheduleAutomaticHistoricalSyncIfNeeded()
+      scheduleAutomaticPhysiologyCaptureIfNeeded()
+    } else if connectionState == "discovering" {
+      updateConnectionState("connected")
+    }
+"""
+discovery_replacement = """    if supportsV5HistoricalSync {
+      updateConnectionState("subscribing")
+      finishV5GattSetupIfNotificationsReady(
+        peripheral,
+        reason: cached ? "cached_notify_state" : "notify_state"
+      )
+    } else if commandCharacteristic != nil {
+      updateConnectionState("ready")
+      sendClientHelloIfNeeded(reason: cached ? "cached_gatt" : "gatt_discovery")
+      scheduleDebugSkinTemperatureCommandIfNeeded(reason: cached ? "cached_ready" : "ready")
+      scheduleAutomaticHistoricalSyncIfNeeded()
+      scheduleAutomaticPhysiologyCaptureIfNeeded()
+    } else if connectionState == "discovering" {
+      updateConnectionState("connected")
+    }
+"""
+if discovery_replacement not in commands_source:
+    if commands_source.count(discovery_anchor) != 1:
+        raise SystemExit("Could not uniquely locate GATT ready transition.")
+    commands_source = commands_source.replace(discovery_anchor, discovery_replacement, 1)
+
+helper_anchor = """  func scheduleAutomaticPhysiologyCaptureIfNeeded() {
+"""
+helper = """  func finishV5GattSetupIfNotificationsReady(_ peripheral: CBPeripheral, reason: String) {
+    guard supportsV5HistoricalSync,
+          activePeripheral?.identifier == peripheral.identifier else {
+      return
+    }
+    let requiredIDs = [
+      CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a"),
+      CBUUID(string: "fd4b0004-cce1-4033-93ce-002d5875f58a"),
+      CBUUID(string: "fd4b0005-cce1-4033-93ce-002d5875f58a"),
+    ]
+    let discovered = peripheral.services?.flatMap { $0.characteristics ?? [] } ?? []
+    let missing = requiredIDs.filter { id in
+      !discovered.contains(where: { $0.uuid == id })
+    }
+    guard missing.isEmpty else {
+      updateConnectionState("incomplete WHOOP GATT")
+      record(
+        level: .error,
+        source: "ble",
+        title: "gatt.required_notification_missing",
+        body: missing.map(\\.uuidString).joined(separator: ",")
+      )
+      return
+    }
+    let pending = requiredIDs.filter { id in
+      discovered.first(where: { $0.uuid == id })?.isNotifying != true
+    }
+    guard pending.isEmpty else {
+      updateConnectionState("subscribing")
+      return
+    }
+
+    updateConnectionState("ready")
+    record(
+      source: "ble",
+      title: "gatt.required_notifications.ready",
+      body: "cmd_from,events,data reason=\\(reason)"
+    )
+    sendClientHelloIfNeeded(reason: "required_notifications_ready")
+  }
+
+"""
+if helper not in commands_source:
+    if commands_source.count(helper_anchor) != 1:
+        raise SystemExit("Could not locate GATT helper insertion point.")
+    commands_source = commands_source.replace(helper_anchor, helper + helper_anchor, 1)
+
+commands_source = commands_source.replace(
+    "          supportsV5SensorCommands else {",
+    "          supportsV5SensorCommands,\n          clientHelloResponseConfirmedForCurrentConnection else {",
+    1,
+)
+commands_source = commands_source.replace(
+    "          supportsV5HistoricalSync,\n          !isHistoricalSyncing else {",
+    "          supportsV5HistoricalSync,\n          clientHelloResponseConfirmedForCurrentConnection,\n          !isHistoricalSyncing else {",
+    1,
+)
+commands_file.write_text(commands_source)
+
+# Only mark the Gen5 GATT link ready after all three required subscriptions
+# have actually completed; a failed CCC registration blocks the handshake.
+peripheral = one("GooseBLEClient+PeripheralDelegate.swift")
+peripheral_source = peripheral.read_text()
+notify_state_anchor = """    if let error {
+      record(level: .error, source: "ble", title: "notify.failed", body: "\\(characteristic.uuid.uuidString) \\(error.localizedDescription)")
+    } else {
+      let state = characteristic.isNotifying ? "subscribed" : "unsubscribed"
+      record(source: "ble", title: "notify.state", body: "\\(characteristic.uuid.uuidString) \\(state)")
+    }
+"""
+notify_state_replacement = notify_state_anchor + """    if supportsV5HistoricalSync {
+      let requiredIDs: Set<CBUUID> = [
+        CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a"),
+        CBUUID(string: "fd4b0004-cce1-4033-93ce-002d5875f58a"),
+        CBUUID(string: "fd4b0005-cce1-4033-93ce-002d5875f58a"),
+      ]
+      if let error, requiredIDs.contains(characteristic.uuid) {
+        updateConnectionState("notify failed")
+        return
+      }
+      finishV5GattSetupIfNotificationsReady(peripheral, reason: "notify_confirmed")
+    }
+"""
+if notify_state_replacement not in peripheral_source:
+    if peripheral_source.count(notify_state_anchor) != 1:
+        raise SystemExit("Could not uniquely locate notification-state callback.")
+    peripheral_source = peripheral_source.replace(notify_state_anchor, notify_state_replacement, 1)
+
+# During the hello exchange, command-response notifications are low volume and
+# must reach the main-owned handshake state machine even if split across chunks.
+dispatch_anchor = """    guard notificationCharacteristicIDs.contains(characteristic.uuid) else {
+      return false
+    }
+
+"""
+dispatch_add = """    if clientHelloSentForCurrentConnection,
+       !clientHelloResponseConfirmedForCurrentConnection,
+       characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a") {
+      return true
+    }
+
+"""
+if dispatch_add not in peripheral_source:
+    if peripheral_source.count(dispatch_anchor) != 1:
+        raise SystemExit("Could not locate notification dispatch guard for hello.")
+    peripheral_source = peripheral_source.replace(dispatch_anchor, dispatch_anchor + dispatch_add, 1)
+
+value_anchor = """    handleDebugCommandValue(value, characteristic: characteristic)
+    handleHistoricalSyncValue(value, characteristic: characteristic)
+"""
+value_replacement = """    handleDebugCommandValue(value, characteristic: characteristic)
+    handleClientHelloResponseValue(value, characteristic: characteristic)
+    handleHistoricalSyncValue(value, characteristic: characteristic)
+"""
+if value_replacement not in peripheral_source:
+    if peripheral_source.count(value_anchor) != 1:
+        raise SystemExit("Could not locate notification handler sequence.")
+    peripheral_source = peripheral_source.replace(value_anchor, value_replacement, 1)
+peripheral.write_text(peripheral_source)
+
+user_actions = one("GooseBLEClient+UserActions.swift")
+user_source = user_actions.read_text()
+hello_write_anchor = """    clientHelloSentForCurrentConnection = true
+    record(
+      source: "ble",
+      title: "hello.sent",
+"""
+hello_write_replacement = """    clientHelloResponseConfirmedForCurrentConnection = false
+    clientHelloResponseTimeoutWorkItem?.cancel()
+    clientHelloSentForCurrentConnection = true
+    record(
+      source: "ble",
+      title: "hello.sent",
+"""
+if hello_write_replacement not in user_source:
+    if user_source.count(hello_write_anchor) != 1:
+        raise SystemExit("Could not locate client hello write completion.")
+    user_source = user_source.replace(hello_write_anchor, hello_write_replacement, 1)
+timeout_anchor = """    record(
+      source: "ble",
+      title: "hello.sent",
+      body: "reason=\\(reason) \\(commandCharacteristic.uuid.uuidString) \\(writeTypeName(writeType)) \\(GooseHello.clientHelloFrameHex)"
+    )
+"""
+timeout_replacement = timeout_anchor + """    let timeout = DispatchWorkItem { [weak self] in
+      guard let self,
+            self.clientHelloSentForCurrentConnection,
+            !self.clientHelloResponseConfirmedForCurrentConnection else {
+        return
+      }
+      self.record(
+        level: .warn,
+        source: "ble",
+        title: "hello.response.timeout",
+        body: "GET_HELLO 0x91 did not return a confirmed WHOOP 5 response"
+      )
+    }
+    clientHelloResponseTimeoutWorkItem = timeout
+    DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
+"""
+if timeout_replacement not in user_source:
+    if user_source.count(timeout_anchor) != 1:
+        raise SystemExit("Could not locate hello timeout insertion point.")
+    user_source = user_source.replace(timeout_anchor, timeout_replacement, 1)
+user_actions.write_text(user_source)
+
+# The Gen5 GET_HELLO response is command-response 0x24, opcode 0x91, echoed
+# request sequence 1, status 1. Its 104-byte body contains the model discriminator.
+historical = one("GooseBLEClient+HistoricalHandlers.swift")
+historical_source = historical.read_text()
+handler_anchor = """  func handleHistoricalSyncValue(_ value: Data, characteristic: CBCharacteristic) {
+"""
+hello_handler = """  func handleClientHelloResponseValue(_ value: Data, characteristic: CBCharacteristic) {
+    guard supportsV5HistoricalSync,
+          clientHelloSentForCurrentConnection,
+          !clientHelloResponseConfirmedForCurrentConnection,
+          characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a") else {
+      return
+    }
+
+    for frame in v5Frames(in: value, characteristic: characteristic.uuid) {
+      guard let payload = Self.v5Payload(in: frame),
+            payload.count >= 5,
+            payload[0] == V5PacketType.commandResponse,
+            payload[2] == 145,
+            payload[3] == 1 else {
+        continue
+      }
+
+      let status = payload[4]
+      if status == 2 {
+        record(level: .debug, source: "ble", title: "hello.response.pending", body: "GET_HELLO seq=1")
+        continue
+      }
+      clientHelloResponseTimeoutWorkItem?.cancel()
+      clientHelloResponseTimeoutWorkItem = nil
+      guard status == 1 else {
+        record(level: .error, source: "ble", title: "hello.response.rejected", body: "GET_HELLO status=\\(status)")
+        updateConnectionState("hello failed")
+        return
+      }
+
+      let body = Array(payload.dropFirst(5))
+      guard body.count >= 104, body[0] == 1 else {
+        record(level: .error, source: "ble", title: "hello.response.invalid", body: "revision/body length invalid bytes=\\(body.count)")
+        updateConnectionState("hello invalid")
+        return
+      }
+      let optical = UInt32(body[87])
+        | (UInt32(body[88]) << 8)
+        | (UInt32(body[89]) << 16)
+        | (UInt32(body[90]) << 24)
+      guard optical >= 48, optical < 86 else {
+        record(level: .error, source: "ble", title: "hello.response.wrong_device", body: "optical_discriminator=\\(optical), expected WHOOP 5.0")
+        updateConnectionState("unsupported WHOOP model")
+        return
+      }
+
+      clientHelloResponseConfirmedForCurrentConnection = true
+      let firmware = "\\(body[91]).\\(body[92]).\\(body[93])"
+      record(
+        source: "ble",
+        title: "hello.response.confirmed",
+        body: "GET_HELLO seq=1 optical=\\(optical) firmware=\\(firmware)"
+      )
+      scheduleAutomaticHistoricalSyncIfNeeded()
+      scheduleAutomaticPhysiologyCaptureIfNeeded()
+      scheduleDebugSkinTemperatureCommandIfNeeded(reason: "hello_confirmed")
+      return
+    }
+  }
+
+"""
+if hello_handler not in historical_source:
+    if historical_source.count(handler_anchor) != 1:
+        raise SystemExit("Could not locate historical handler insertion point.")
+    historical_source = historical_source.replace(handler_anchor, hello_handler + handler_anchor, 1)
+historical.write_text(historical_source)
+
+# Manual sync is also blocked until the same verified hello response is received.
+commands = one("GooseBLEClient+HistoricalCommands.swift")
+commands_source = commands.read_text()
+sync_guard_anchor = """    guard supportsV5HistoricalSync else {
+      let characteristic = commandCharacteristic?.uuid.uuidString ?? "missing"
+      failHistoricalSync("Historical sync currently supports the Goose V5 fd4b command characteristic. Active command characteristic: \\(characteristic).")
+      return
+    }
+
+"""
+sync_guard_replacement = sync_guard_anchor + """    guard clientHelloResponseConfirmedForCurrentConnection else {
+      failHistoricalSync("Historical sync is waiting for a confirmed WHOOP 5 GET_HELLO response.")
+      return
+    }
+
+"""
+if sync_guard_replacement not in commands_source:
+    if commands_source.count(sync_guard_anchor) != 1:
+        raise SystemExit("Could not locate historical sync hello gate.")
+    commands_source = commands_source.replace(sync_guard_anchor, sync_guard_replacement, 1)
+commands.write_text(commands_source)
+
+# Other commands and debug writes must not race the Gen5 bootstrap.
+parsing = one("GooseBLEClient.swift")
+parsing_source = parsing.read_text()
+parsing_source = parsing_source.replace(
+    "    activePeripheral != nil && commandCharacteristic != nil && connectionState == \"ready\"",
+    "    activePeripheral != nil && commandCharacteristic != nil && connectionState == \"ready\"",
+    1,
+)
+parsing.write_text(parsing_source)
+
+debug_file = one("GooseBLEClient+DebugAndSync.swift")
+debug_source = debug_file.read_text()
+debug_guard = "    guard autoSendDebugSkinTemperatureCommand, !debugSkinTemperatureCommandSent else {\n"
+debug_new = "    guard clientHelloResponseConfirmedForCurrentConnection, autoSendDebugSkinTemperatureCommand, !debugSkinTemperatureCommandSent else {\n"
+if debug_new not in debug_source:
+    if debug_source.count(debug_guard) != 1:
+        raise SystemExit("Could not locate debug command scheduling guard.")
+    debug_source = debug_source.replace(debug_guard, debug_new, 1)
+debug_file.write_text(debug_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
