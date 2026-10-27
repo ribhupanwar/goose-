@@ -55,7 +55,7 @@ if guard_new not in h:
 
 # The notification set also contains standard 2A37 heart-rate characteristics.
 # Only feed the three Gen5 fd4b protocol channels into the Puffin reassembler.
-channel_anchor = "  func handleHistoricalSyncValue(_ value: Data, characteristic: CBCharacteristic) {\\n"
+channel_anchor = "  func handleHistoricalSyncValue(_ value: Data, characteristic: CBCharacteristic) {\n"
 channel_guard = """    guard characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a")
        || characteristic.uuid == CBUUID(string: "fd4b0004-cce1-4033-93ce-002d5875f58a")
        || characteristic.uuid == CBUUID(string: "fd4b0005-cce1-4033-93ce-002d5875f58a") else {
