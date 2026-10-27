@@ -43,6 +43,20 @@ jobs:
           echo "Found project at: $PROJECT_FILE"
           ls -la "$SOURCE_ROOT"
 
+      - name: Archive extracted Goose source for inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc "$GOOSE_SOURCE_ROOT" "$RUNNER_TEMP/Goose-source-inspection.zip"
+
+      - name: Upload extracted Goose source
+        uses: actions/upload-artifact@v4
+        with:
+          name: Goose-source-inspection
+          path: Goose-source-inspection.zip
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Fix WHOOP 5.0 historical packet dispatch
         shell: bash
         run: |
