@@ -25,6 +25,8 @@ new = """        WhoopStyleHomeOverview(
           sleep: homeSnapshot(for: .sleep),
           strain: homeSnapshot(for: .strain),
           stress: landingSnapshot(for: .stress),
+          liveHeartRateBPM: model.ble.liveHeartRateBPM,
+          liveHeartRateSource: model.ble.liveHeartRateSource,
           openMetric: openHealth
         )
 
@@ -44,6 +46,8 @@ struct WhoopStyleHomeOverview: View {
   let sleep: HealthMetricSnapshot
   let strain: HealthMetricSnapshot
   let stress: HealthMetricSnapshot
+  let liveHeartRateBPM: Int?
+  let liveHeartRateSource: String
   let openMetric: (HealthRoute) -> Void
 
   var body: some View {
@@ -59,6 +63,23 @@ struct WhoopStyleHomeOverview: View {
             .tracking(1.1)
             .foregroundStyle(.secondary)
         }
+        HStack(spacing: 8) {
+          Image(systemName: "waveform.path.ecg")
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(Color(red: 0.28, green: 0.88, blue: 0.58))
+          Text("LIVE HEART RATE")
+            .font(.caption2.weight(.bold))
+            .tracking(1.0)
+            .foregroundStyle(.secondary)
+          Spacer()
+          Text(liveHeartRateBPM.map { "\($0) BPM" } ?? "WAITING")
+            .font(.system(size: 15, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         HStack {
           VStack(alignment: .leading, spacing: 4) {
             Text("RECOVERY")
@@ -174,3 +195,22 @@ struct WhoopStyleHomeOverview: View {
 home.write_text(home_text.replace(old, new))
 score.write_text(score_text)
 print("Applied WHOOP-inspired Home overview: recovery hero + Sleep/Strain/Stress quick metrics.")
+
+
+# Apply a consistent, dark-first visual system across every app tab.
+root_view = root / "RootView.swift"
+root_view_text = root_view.read_text()
+if ".preferredColorScheme(.dark)" not in root_view_text:
+    anchor = "    .gooseScreenBackground()"
+    if anchor not in root_view_text:
+        raise SystemExit("RootView background anchor not found; refusing to force a color scheme.")
+    root_view.write_text(root_view_text.replace(anchor, anchor + "\n    .preferredColorScheme(.dark)", 1))
+
+theme_file = root / "GooseTheme.swift"
+theme_text = theme_file.read_text()
+theme_text = theme_text.replace(
+    "Color(red: 0.06, green: 0.09, blue: 0.11)",
+    "Color(red: 0.025, green: 0.035, blue: 0.04)"
+)
+theme_file.write_text(theme_text)
+print("Applied dark-first WHOOP-inspired visual system across Home, Health, Coach, Device, and More.")
