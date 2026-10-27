@@ -63,8 +63,8 @@ enum HealthKitReadinessCalibration {
   }
 }
 
-private extension Comparable {
-  func clamped(to range: ClosedRange<Self>) -> Self {
+private extension Double {
+  func clamped(to range: ClosedRange<Double>) -> Double {
     min(max(self, range.lowerBound), range.upperBound)
   }
 }
