@@ -247,4 +247,109 @@ if hook not in a:
     a = a.replace(anchor, hook + anchor, 1)
 app.write_text(a)
 
+
+# Ensure the app has finished parsing all earlier notifications and flushed its
+# historical HR/HRV series before the band is allowed to trim its cursor.
+stores = one("HeartRateSeriesStores.swift")
+store_source = stores.read_text()
+hr_flush = """  func flush() -> Bool {
+    stateLock.lock()
+    pendingWrite?.cancel()
+    pendingWrite = nil
+    let destination = url
+    let payload = HeartRateSeriesFile(version: 1, samples: samples)
+    stateLock.unlock()
+    return writeQueue.sync {
+      do {
+        try FileManager.default.createDirectory(
+          at: destination.deletingLastPathComponent(),
+          withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(payload).write(to: destination, options: .atomic)
+        return true
+      } catch {
+        NSLog("GooseSwift heart-rate flush failed: \\\\(String(describing: error))")
+        return false
+      }
+    }
+  }
+
+"""
+if "func flush() -> Bool" not in store_source:
+    first = store_source.find("  private func schedulePersist() {")
+    if first < 0:
+        raise SystemExit("Could not locate heart-rate store persistence method.")
+    store_source = store_source[:first] + hr_flush + store_source[first:]
+    second = store_source.find("  private func schedulePersist() {", first + len(hr_flush) + 1)
+    if second < 0:
+        raise SystemExit("Could not locate HRV store persistence method.")
+    hrv_flush = hr_flush.replace(
+      "HeartRateSeriesFile(version: 1, samples: samples)",
+      "HRVSeriesFile(version: 1, samples: samples)"
+    ).replace(
+      "GooseSwift heart-rate flush failed",
+      "GooseSwift HRV flush failed"
+    )
+    store_source = store_source[:second] + hrv_flush + store_source[second:]
+stores.write_text(store_source)
+
+pipeline = one("GooseAppModel+NotificationPipeline.swift")
+p = pipeline.read_text()
+flush_method = """  func flushHistoricalNotificationPipeline(completion: @escaping (Bool) -> Void) {
+    notificationIngestQueue.async { [weak self] in
+      guard let self else {
+        DispatchQueue.main.async { completion(false) }
+        return
+      }
+      self.notificationParseQueue.async {
+        let heartRateSaved = HeartRateSeriesStore.shared.flush()
+        let hrvSaved = HRVSeriesStore.shared.flush()
+        DispatchQueue.main.async {
+          completion(heartRateSaved && hrvSaved)
+        }
+      }
+    }
+  }
+
+"""
+if "func flushHistoricalNotificationPipeline(" not in p:
+    anchor = "  func handleNotification(_ event: GooseNotificationEvent) {"
+    if p.count(anchor) != 1:
+        raise SystemExit("Could not locate notification pipeline insertion point.")
+    p = p.replace(anchor, flush_method + anchor, 1)
+pipeline.write_text(p)
+
+app = one("GooseAppModel.swift")
+a = app.read_text()
+old_hook = """    ble.onHistoricalBatchCommit = { frames, ackPayload, completion in
+      GooseHistoricalSyncBatchArchive.shared.append(
+        frames: frames,
+        ackPayload: ackPayload,
+        completion: completion
+      )
+    }
+"""
+new_hook = """    ble.onHistoricalBatchCommit = { [weak self] frames, ackPayload, completion in
+      GooseHistoricalSyncBatchArchive.shared.append(
+        frames: frames,
+        ackPayload: ackPayload
+      ) { saved in
+        guard saved, let self else {
+          completion(false)
+          return
+        }
+        DispatchQueue.main.async {
+          self.flushHistoricalNotificationPipeline(completion: completion)
+        }
+      }
+    }
+"""
+if new_hook not in a:
+    if a.count(old_hook) != 1:
+        raise SystemExit("Could not locate historical batch commit callback.")
+    a = a.replace(old_hook, new_hook, 1)
+app.write_text(a)
+
 print("Enabled durable WHOOP history batch storage before HISTORY_END ACK.")
