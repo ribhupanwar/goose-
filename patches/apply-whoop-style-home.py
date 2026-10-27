@@ -198,7 +198,7 @@ print("Applied WHOOP-inspired Home overview: recovery hero + Sleep/Strain/Stress
 
 
 # Apply a consistent, dark-first visual system across every app tab.
-root_view = root / "RootView.swift"
+root_view = root / "GooseSwift" / "RootView.swift"
 root_view_text = root_view.read_text()
 if ".preferredColorScheme(.dark)" not in root_view_text:
     anchor = "    .gooseScreenBackground()"
@@ -206,7 +206,7 @@ if ".preferredColorScheme(.dark)" not in root_view_text:
         raise SystemExit("RootView background anchor not found; refusing to force a color scheme.")
     root_view.write_text(root_view_text.replace(anchor, anchor + "\n    .preferredColorScheme(.dark)", 1))
 
-theme_file = root / "GooseTheme.swift"
+theme_file = root / "GooseSwift" / "GooseTheme.swift"
 theme_text = theme_file.read_text()
 theme_text = theme_text.replace(
     "Color(red: 0.06, green: 0.09, blue: 0.11)",
