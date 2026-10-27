@@ -313,7 +313,7 @@ hr_flush = """  func flush() -> Bool {
         try encoder.encode(payload).write(to: destination, options: .atomic)
         return true
       } catch {
-        NSLog("GooseSwift heart-rate flush failed: \\\\(String(describing: error))")
+        NSLog("GooseSwift heart-rate flush failed: \\(String(describing: error))")
         return false
       }
     }
@@ -352,7 +352,7 @@ if "func flush() -> Bool" not in store_source:
         try encoder.encode(payload).write(to: destination, options: .atomic)
         return true
       } catch {
-        NSLog("GooseSwift HRV flush failed: \\\\(String(describing: error))")
+        NSLog("GooseSwift HRV flush failed: \\(String(describing: error))")
         return false
       }
     }
