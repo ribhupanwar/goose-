@@ -97,6 +97,18 @@ jobs:
           grep -n "CODE_SIGN_ENTITLEMENTS" "$GOOSE_SOURCE_ROOT/GooseSwift.xcodeproj/project.pbxproj"
           /usr/libexec/PlistBuddy -c "Print :com.apple.developer.healthkit" "$GOOSE_SOURCE_ROOT/GooseSwift/GooseSwift.entitlements"
 
+      - name: Apply Apple Health training signals and baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/patches/prepare-healthkit-patch.py"
+          python3 "$GITHUB_WORKSPACE/patches/apply-healthkit-training-signals.py" "$GOOSE_SOURCE_ROOT"
+          python3 "$GITHUB_WORKSPACE/patches/fix-healthkit-interpolation.py" "$GOOSE_SOURCE_ROOT"
+          python3 "$GITHUB_WORKSPACE/patches/apply-healthkit-baselines.py" "$GOOSE_SOURCE_ROOT"
+          python3 "$GITHUB_WORKSPACE/patches/apply-recovery-engine.py" "$GOOSE_SOURCE_ROOT"
+          python3 "$GITHUB_WORKSPACE/patches/apply-sleep-need-debt.py" "$GOOSE_SOURCE_ROOT"
+          python3 "$GITHUB_WORKSPACE/patches/apply-daily-strain-cardio-load.py" "$GOOSE_SOURCE_ROOT"
+
       - name: Select Xcode and show SDK
         shell: bash
         run: |
