@@ -47,6 +47,12 @@ jobs:
           echo "Found project at: $PROJECT_FILE"
           ls -la "$SOURCE_ROOT"
 
+      - name: Normalize WHOOP parser device type propagation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/patches/fix-device-type-propagation.py" "$GOOSE_SOURCE_ROOT"
+
       - name: Fix WHOOP 5.0 historical packet dispatch
         shell: bash
         run: |
