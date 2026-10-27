@@ -35,6 +35,14 @@ jobs:
           echo "GOOSE_SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
           echo "Patched source: $SOURCE_ROOT"
 
+      - name: Upload patched Swift source for UI audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: Goose-patched-source-ui-audit
+          path: ${{ env.GOOSE_SOURCE_ROOT }}
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Select Xcode and show SDK
         run: |
           set -euo pipefail
