@@ -89,14 +89,14 @@ hello_methods = """  func handleClientHelloResponsePayload(_ payload: [UInt8]) {
     clientHelloResponseTimeoutWorkItem?.cancel()
     clientHelloResponseTimeoutWorkItem = nil
     guard status == 1 else {
-      record(level: .error, source: "ble", title: "hello.response.rejected", body: "GET_HELLO status=\\\\(status)")
+      record(level: .error, source: "ble", title: "hello.response.rejected", body: "GET_HELLO status=\\(status)")
       updateConnectionState("hello failed")
       return
     }
 
     let body = Array(payload.dropFirst(5))
     guard body.count >= 104 else {
-      record(level: .error, source: "ble", title: "hello.response.invalid", body: "body length=\\\\(body.count)")
+      record(level: .error, source: "ble", title: "hello.response.invalid", body: "body length=\\(body.count)")
       updateConnectionState("hello invalid")
       return
     }
@@ -108,7 +108,7 @@ hello_methods = """  func handleClientHelloResponsePayload(_ payload: [UInt8]) {
       return
     }
 
-    let firmware = "\\\\(body[91]).\\\\(body[92]).\\\\(body[93])"
+    let firmware = "\\(body[91]).\\(body[92]).\\(body[93])"
     var needsClockCorrection = true
     var clockDeltaSeconds: Double?
     if revision == 1,
@@ -126,14 +126,14 @@ hello_methods = """  func handleClientHelloResponsePayload(_ payload: [UInt8]) {
       strapClockOffsetSeconds = strapDate.timeIntervalSince(now)
       strapClockUpdatedAt = now
       strapClockStatus = needsClockCorrection
-        ? "Clock differs by \\\\(Self.clockOffsetText(strapClockOffsetSeconds ?? 0)); syncing"
+        ? "Clock differs by \\(Self.clockOffsetText(strapClockOffsetSeconds ?? 0)); syncing"
         : "Clock in sync"
     }
 
     record(
       source: "ble",
       title: "hello.response.confirmed",
-      body: "GET_HELLO seq=1 revision=\\\\(revision) optical=\\\\(optical) firmware=\\\\(firmware) clock_delta=\\\\(clockDeltaSeconds.map { String(format: "%.3f", $0) } ?? "unknown")"
+      body: "GET_HELLO seq=1 revision=\\(revision) optical=\\(optical) firmware=\\(firmware) clock_delta=\\(clockDeltaSeconds.map { String(format: "%.3f", $0) } ?? "unknown")"
     )
 
     if needsClockCorrection {
@@ -159,7 +159,7 @@ hello_methods = """  func handleClientHelloResponsePayload(_ payload: [UInt8]) {
     record(
       source: "ble",
       title: "hello.bootstrap.ready",
-      body: "reason=\\\\(reason); Gen5 HELLO and RTC contract confirmed"
+      body: "reason=\\(reason); Gen5 HELLO and RTC contract confirmed"
     )
     scheduleAutomaticHistoricalSyncIfNeeded()
     scheduleAutomaticPhysiologyCaptureIfNeeded()
@@ -179,7 +179,8 @@ handlers.write_text(h)
 peripheral = one("GooseBLEClient+PeripheralDelegate.swift")
 p = peripheral.read_text()
 p = p.replace(
-    "    handleClientHelloResponseValue(value, characteristic: characteristic)\\n",
+    """    handleClientHelloResponseValue(value, characteristic: characteristic)
+""",
     "",
     1,
 )
@@ -236,7 +237,7 @@ commands.write_text(cmd)
 # Add readiness completion only after a successful response.
 h = handlers.read_text()
 set_anchor = """      strapClockStatus = "Clock synced"
-      record(source: "ble.clock", title: "clock.synced", body: "seq=\\\\(pending.sequence) \\\\(result)")
+      record(source: "ble.clock", title: "clock.synced", body: "seq=\\(pending.sequence) \\(result)")
 """
 set_replacement = set_anchor + """      if clientHelloClockBootstrapPending {
         completeClientHelloBootstrap(reason: "set_clock_confirmed")
