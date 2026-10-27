@@ -1073,4 +1073,288 @@ if export_variant not in export_source:
     export_source = export_source.replace(export_anchor, export_variant + export_anchor, 1)
 export_file.write_text(export_source)
 
+# Decode the Gen5 v18 historical HR/RR slots from Edge's confirmed offsets:
+# HR inner[14], RR count inner[15], up to four signed RR values at 16/18/20/22.
+# The compact bridge exposes these even when full-frame sampling is throttled.
+bridge = one("bridge.rs")
+bridge_source = bridge.read_text()
+heart_rate_map_anchor = """                Some(DataPacketBodySummary::RealtimeCompactHeartRate { heart_rate }) => *heart_rate,
+                _ => None,
+"""
+heart_rate_map_replacement = """                Some(DataPacketBodySummary::RealtimeCompactHeartRate { heart_rate }) => *heart_rate,
+                Some(DataPacketBodySummary::NormalHistory { marker_offset: Some(14), marker_value: Some(value), .. })
+                    if parsed.device_type == DeviceType::Goose && *packet_k == Some(18) && (25..=230).contains(value) => Some(*value),
+                _ => None,
+"""
+if heart_rate_map_replacement not in bridge_source:
+    if bridge_source.count(heart_rate_map_anchor) != 1:
+        raise SystemExit("Could not locate compact Gen5 history heart-rate mapping.")
+    bridge_source = bridge_source.replace(heart_rate_map_anchor, heart_rate_map_replacement, 1)
+
+rr_helper = """fn compact_gen5_history_rr_intervals(
+    parsed: &ParsedFrame,
+    packet_k: Option<u8>,
+    body_hex: &str,
+) -> Vec<u16> {
+    if parsed.device_type != DeviceType::Goose
+        || parsed.packet_type != Some(PACKET_TYPE_HISTORICAL_DATA)
+        || packet_k != Some(18)
+    {
+        return Vec::new();
+    }
+    let Ok(bytes) = hex::decode(body_hex) else {
+        return Vec::new();
+    };
+    let Some(declared_count) = bytes.get(2).copied() else {
+        return Vec::new();
+    };
+    if declared_count > 4 {
+        return Vec::new();
+    }
+
+    let mut accepted = Vec::new();
+    for index in 0..usize::from(declared_count) {
+        let offset = 3 + index * 2;
+        let Some(pair) = bytes.get(offset..offset + 2) else {
+            break;
+        };
+        let value = i16::from_le_bytes([pair[0], pair[1]]);
+        if (200..=2500).contains(&value) {
+            accepted.push(value as u16);
+        }
+    }
+    accepted
+}
+
+"""
+if rr_helper not in bridge_source:
+    bridge_source = bridge_source.replace("fn compact_parsed_frame_summary(parsed: &ParsedFrame) -> serde_json::Value {", rr_helper + "fn compact_parsed_frame_summary(parsed: &ParsedFrame) -> serde_json::Value {", 1)
+
+rr_insert_anchor = """            let movement = compact_k10_movement_summary(body_summary.as_ref());
+            json!({
+"""
+rr_insert = """            let movement = compact_k10_movement_summary(body_summary.as_ref());
+            let rr_intervals_ms = compact_gen5_history_rr_intervals(parsed, *packet_k, body_hex);
+            json!({
+"""
+if rr_insert not in bridge_source:
+    if bridge_source.count(rr_insert_anchor) != 1:
+        raise SystemExit("Could not locate compact RR summary insertion point.")
+    bridge_source = bridge_source.replace(rr_insert_anchor, rr_insert, 1)
+rr_json_anchor = """                "heart_rate": heart_rate,
+                "movement": movement,
+"""
+rr_json_replacement = """                "heart_rate": heart_rate,
+                "rr_intervals_ms": rr_intervals_ms,
+                "movement": movement,
+"""
+if rr_json_replacement not in bridge_source:
+    if bridge_source.count(rr_json_anchor) != 1:
+        raise SystemExit("Could not locate compact RR JSON fields.")
+    bridge_source = bridge_source.replace(rr_json_anchor, rr_json_replacement, 1)
+bridge.write_text(bridge_source)
+
+# Surface compact RR arrays and distinguish historical samples from live HR so
+# historical backfill uses strap timestamps and never overwrites the live HR tile.
+parsing = one("NotificationFrameParsing.swift")
+parsing_source = parsing.read_text()
+compact_field_anchor = """  let heartRateBPM: Int?
+  let r17Flags: Int?
+"""
+compact_field_replacement = """  let heartRateBPM: Int?
+  let rrIntervalsMs: [Int]
+  let r17Flags: Int?
+"""
+if compact_field_replacement not in parsing_source:
+    if parsing_source.count(compact_field_anchor) != 1:
+        raise SystemExit("Could not locate compact HR summary fields.")
+    parsing_source = parsing_source.replace(compact_field_anchor, compact_field_replacement, 1)
+compact_init_anchor = """    heartRateBPM = NotificationFrameParser.intValue(raw["heart_rate"])
+    r17Flags = NotificationFrameParser.intValue(raw["r17_flags"])
+"""
+compact_init_replacement = """    heartRateBPM = NotificationFrameParser.intValue(raw["heart_rate"])
+    rrIntervalsMs = (raw["rr_intervals_ms"] as? [Any])?.compactMap { NotificationFrameParser.intValue($0) } ?? []
+    r17Flags = NotificationFrameParser.intValue(raw["r17_flags"])
+"""
+if compact_init_replacement not in parsing_source:
+    if parsing_source.count(compact_init_anchor) != 1:
+        raise SystemExit("Could not locate compact RR initializer.")
+    parsing_source = parsing_source.replace(compact_init_anchor, compact_init_replacement, 1)
+interpretation_fields_anchor = """  let heartRateBPM: Int?
+  let movementSample: MovementPacketSample?
+"""
+interpretation_fields_replacement = """  let heartRateBPM: Int?
+  let heartRateSource: String?
+  let heartRateTimestamp: Date?
+  let rrIntervalsMs: [Int]
+  let movementSample: MovementPacketSample?
+"""
+if interpretation_fields_replacement not in parsing_source:
+    if parsing_source.count(interpretation_fields_anchor) != 1:
+        raise SystemExit("Could not locate interpretation HR fields.")
+    parsing_source = parsing_source.replace(interpretation_fields_anchor, interpretation_fields_replacement, 1)
+parsing.write_text(parsing_source)
+
+publisher = one("GooseAppModel+PacketPublishing.swift")
+publisher_source = publisher.read_text()
+extract_signature_anchor = """  static func extractHeartRate(from parsed: [String: Any]) -> Int? {
+"""
+extract_signature_replacement = """  static func extractHeartRate(from parsed: [String: Any], deviceType: String) -> Int? {
+"""
+if extract_signature_replacement not in publisher_source:
+    if publisher_source.count(extract_signature_anchor) != 1:
+        raise SystemExit("Could not locate heart-rate extractor signature.")
+    publisher_source = publisher_source.replace(extract_signature_anchor, extract_signature_replacement, 1)
+extract_body_anchor = """      let bodyKind = body["kind"] as? String,
+      ["raw_motion_k10", "realtime_compact_heart_rate"].contains(bodyKind)
+    else {
+      return nil
+    }
+    return intValue(body["heart_rate"])
+"""
+extract_body_replacement = """      let bodyKind = body["kind"] as? String
+    else {
+      return nil
+    }
+    if ["raw_motion_k10", "realtime_compact_heart_rate"].contains(bodyKind) {
+      return intValue(body["heart_rate"])
+    }
+    if deviceType == "GOOSE",
+       bodyKind == "normal_history",
+       intValue(payload["packet_k"]) == 18,
+       intValue(body["marker_offset"]) == 14,
+       let value = intValue(body["marker_value"]),
+       (25...230).contains(value) {
+      return value
+    }
+    return nil
+"""
+if extract_body_replacement not in publisher_source:
+    if publisher_source.count(extract_body_anchor) != 1:
+        raise SystemExit("Could not locate heart-rate extractor body.")
+    publisher_source = publisher_source.replace(extract_body_anchor, extract_body_replacement, 1)
+publisher.write_text(publisher_source)
+
+pipeline = one("GooseAppModel+NotificationPipeline.swift")
+pipeline_source = pipeline.read_text()
+error_init_anchor = """        heartRateBPM: nil,
+        movementSample: nil,
+"""
+error_init_replacement = """        heartRateBPM: nil,
+        heartRateSource: nil,
+        heartRateTimestamp: nil,
+        rrIntervalsMs: [],
+        movementSample: nil,
+"""
+if error_init_replacement not in pipeline_source:
+    if pipeline_source.count(error_init_anchor) != 1:
+        raise SystemExit("Could not locate failed interpretation initializer.")
+    pipeline_source = pipeline_source.replace(error_init_anchor, error_init_replacement, 1)
+
+success_init_anchor = """      heartRateBPM: compact?.heartRateBPM ?? parsed.flatMap(extractHeartRate),
+      movementSample: extractMovementPacket(
+"""
+success_init_replacement = """      heartRateBPM: compact?.heartRateBPM ?? parsed.flatMap { extractHeartRate(from: $0, deviceType: event.rustDeviceType) },
+      heartRateSource: {
+        let packetType = compact?.packetType ?? parsed.flatMap { intValue($0["packet_type"]) }
+        let packetK = compact?.packetK ?? (parsed?["parsed_payload"] as? [String: Any]).flatMap { intValue($0["packet_k"]) }
+        if event.rustDeviceType == "GOOSE", packetType == 47, packetK == 18 {
+          return "whoop.gen5.history.v18"
+        }
+        if event.rustDeviceType == "GOOSE", packetType == 40 {
+          return "whoop.gen5.live.0x28"
+        }
+        return "rust.k10"
+      }(),
+      heartRateTimestamp: {
+        let packetType = compact?.packetType ?? parsed.flatMap { intValue($0["packet_type"]) }
+        let packetK = compact?.packetK ?? (parsed?["parsed_payload"] as? [String: Any]).flatMap { intValue($0["packet_k"]) }
+        guard event.rustDeviceType == "GOOSE", packetType == 47, packetK == 18,
+              let seconds = compact?.timestampSeconds
+                ?? (parsed?["parsed_payload"] as? [String: Any]).flatMap({ intValue($0["timestamp_seconds"]) }) else {
+          return nil
+        }
+        let subseconds = compact?.timestampSubseconds
+          ?? (parsed?["parsed_payload"] as? [String: Any]).flatMap({ intValue($0["timestamp_subseconds"]) })
+          ?? 0
+        return Date(timeIntervalSince1970: Double(seconds) + Double(subseconds) / 32768.0)
+      }(),
+      rrIntervalsMs: {
+        let packetType = compact?.packetType ?? parsed.flatMap { intValue($0["packet_type"]) }
+        let packetK = compact?.packetK ?? (parsed?["parsed_payload"] as? [String: Any]).flatMap { intValue($0["packet_k"]) }
+        guard event.rustDeviceType == "GOOSE", packetType == 47, packetK == 18 else { return [] }
+        return compact?.rrIntervalsMs ?? []
+      }(),
+      movementSample: extractMovementPacket(
+"""
+if success_init_replacement not in pipeline_source:
+    if pipeline_source.count(success_init_anchor) != 1:
+        raise SystemExit("Could not locate successful interpretation initializer.")
+    pipeline_source = pipeline_source.replace(success_init_anchor, success_init_replacement, 1)
+
+heart_rate_handler_anchor = """    if let bpm = interpretation.heartRateBPM {
+      ble.recordLiveHeartRate(bpm, source: "rust.k10", at: event.capturedAt)
+      recordDeviceSignalPoint(
+        family: "HR",
+        value: "\\(bpm) bpm",
+        detail: "raw_motion_k10 embedded heart-rate byte",
+        capturedAt: event.capturedAt,
+        minimumInterval: 1
+      )
+    }
+"""
+heart_rate_handler_replacement = """    if let bpm = interpretation.heartRateBPM {
+      if interpretation.heartRateSource == "whoop.gen5.history.v18" {
+        let capturedAt = interpretation.heartRateTimestamp ?? event.capturedAt
+        HeartRateSeriesStore.shared.appendHistorical(
+          bpm: bpm,
+          source: "whoop.gen5.history.v18",
+          capturedAt: capturedAt
+        )
+        if let rmssd = Self.rmssdMilliseconds(from: interpretation.rrIntervalsMs) {
+          HRVSeriesStore.shared.appendHistorical(
+            rmssdMS: rmssd,
+            rrIntervalCount: interpretation.rrIntervalsMs.count,
+            source: "whoop.gen5.history.v18.rr_rmssd_estimate",
+            capturedAt: capturedAt
+          )
+        }
+      } else {
+        let source = interpretation.heartRateSource ?? "rust.k10"
+        ble.recordLiveHeartRate(bpm, source: source, at: event.capturedAt)
+        recordDeviceSignalPoint(
+          family: "HR",
+          value: "\\(bpm) bpm",
+          detail: source == "whoop.gen5.live.0x28" ? "WHOOP 5 compact live HR" : "raw motion embedded heart-rate byte",
+          capturedAt: event.capturedAt,
+          minimumInterval: 1
+        )
+      }
+    }
+"""
+if heart_rate_handler_replacement not in pipeline_source:
+    if pipeline_source.count(heart_rate_handler_anchor) != 1:
+        raise SystemExit("Could not locate parsed heart-rate persistence handler.")
+    pipeline_source = pipeline_source.replace(heart_rate_handler_anchor, heart_rate_handler_replacement, 1)
+
+rmssd_helper = """  static func rmssdMilliseconds(from rrIntervals: [Int]) -> Double? {
+    guard rrIntervals.count >= 2 else { return nil }
+    var squaredDifferenceTotal = 0.0
+    for index in 1..<rrIntervals.count {
+      let difference = Double(rrIntervals[index] - rrIntervals[index - 1])
+      squaredDifferenceTotal += difference * difference
+    }
+    let value = sqrt(squaredDifferenceTotal / Double(rrIntervals.count - 1))
+    return value.isFinite && (0...300).contains(value) ? value : nil
+  }
+
+"""
+if rmssd_helper not in pipeline_source:
+    anchor = """  func handleParsedNotificationFrame(_ interpretation: NotificationFrameInterpretation, event: GooseNotificationEvent) {
+"""
+    if pipeline_source.count(anchor) != 1:
+        raise SystemExit("Could not locate notification frame handler insertion point.")
+    pipeline_source = pipeline_source.replace(anchor, rmssd_helper + anchor, 1)
+pipeline.write_text(pipeline_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
