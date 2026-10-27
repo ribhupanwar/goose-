@@ -64,7 +64,8 @@ d = central.read_text()
 reset_anchor = """    clientHelloBootstrapScheduledForCurrentConnection = false
     clientHelloResponseTimeoutWorkItem = nil
 """
-reset_replacement = reset_anchor + "    v5NotificationRegistrationScheduled.removeAll()\\n"
+reset_replacement = reset_anchor + """    v5NotificationRegistrationScheduled.removeAll()
+"""
 if reset_replacement not in d:
     if d.count(reset_anchor) != 1:
         raise SystemExit("Could not locate per-connection notification registration reset.")
