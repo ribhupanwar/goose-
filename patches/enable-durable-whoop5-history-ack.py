@@ -137,6 +137,21 @@ if reset_replacement not in c:
     c = c.replace(reset_anchor, reset_replacement, 1)
 commands.write_text(c)
 
+# The manual/user-action entry point explicitly opted out of HISTORY_END ACKs.
+# Turn it on now that the durable commit gate above is installed.
+actions = one("GooseBLEClient+UserActions.swift")
+actions_source = actions.read_text()
+old_ack_opt_out = "acknowledgeHistoricalDataResult: false"
+if "acknowledgeHistoricalDataResult: true" not in actions_source:
+    if actions_source.count(old_ack_opt_out) != 1:
+        raise SystemExit("Could not locate the explicit historical ACK opt-out.")
+    actions_source = actions_source.replace(
+        old_ack_opt_out,
+        "acknowledgeHistoricalDataResult: true",
+        1,
+    )
+actions.write_text(actions_source)
+
 # Wait for durable batch storage before clearing the ACK queue or writing the
 # 8-byte continuation token. If storage fails, fail closed: never ACK the band.
 debug = one("GooseBLEClient+DebugAndSync.swift")
