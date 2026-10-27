@@ -49,6 +49,24 @@ if "var v5NotificationFrameBuffers: [CBUUID: Data]" not in client_source:
         property_anchor + "  var v5NotificationFrameBuffers: [CBUUID: Data] = [:]\n",
         1,
     )
+# Edge also scans the 16-bit WHOOP SIG member UUID. Some iOS adverts
+# expose fd4b rather than the full 128-bit service UUID, so include both forms
+# in the scan filter while keeping GATT discovery on the full service UUID.
+service_anchor = """  let whoopServices = [
+    CBUUID(string: "fd4b0001-cce1-4033-93ce-002d5875f58a"),
+    CBUUID(string: "61080001-8d6d-82b8-614a-1c8cb0f8dcc6"),
+  ]
+"""
+service_replacement = """  let whoopServices = [
+    CBUUID(string: "fd4b0001-cce1-4033-93ce-002d5875f58a"),
+    CBUUID(string: "61080001-8d6d-82b8-614a-1c8cb0f8dcc6"),
+    CBUUID(string: "fd4b"),
+  ]
+"""
+if service_replacement not in client_source:
+    if client_source.count(service_anchor) != 1:
+        raise SystemExit("Could not uniquely locate WHOOP scan service filters.")
+    client_source = client_source.replace(service_anchor, service_replacement, 1)
 client.write_text(client_source)
 
 parsing = one("GooseBLEClient+Parsing.swift")
