@@ -10,6 +10,17 @@ s = p.read_text()
 def replace_once(old, new, label):
     global s
     if old not in s:
+        if label == "median/MAD baseline calculation":
+            lines = s.splitlines()
+            hits = [i for i, line in enumerate(lines) if "rollingBaseline" in line or "mean" in line.lower() or "HealthKitRollingBaseline" in line]
+            print("Baseline source diagnostics (relevant lines):")
+            shown = set()
+            for i in hits:
+                for j in range(max(0, i - 4), min(len(lines), i + 7)):
+                    if j not in shown:
+                        print(str(j + 1) + ": " + lines[j])
+                        shown.add(j)
+            raise SystemExit("Baseline patch anchor missing: " + label + "; inspect diagnostics above")
         raise SystemExit(f"Baseline patch anchor missing: {label}")
     s = s.replace(old, new, 1)
 
