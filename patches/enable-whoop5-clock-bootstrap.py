@@ -53,6 +53,20 @@ if guard_new not in h:
         raise SystemExit("Could not locate historical notification handler guard.")
     h = h.replace(guard_old, guard_new, 1)
 
+# The notification set also contains standard 2A37 heart-rate characteristics.
+# Only feed the three Gen5 fd4b protocol channels into the Puffin reassembler.
+channel_anchor = "  func handleHistoricalSyncValue(_ value: Data, characteristic: CBCharacteristic) {\\n"
+channel_guard = """    guard characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a")
+       || characteristic.uuid == CBUUID(string: "fd4b0004-cce1-4033-93ce-002d5875f58a")
+       || characteristic.uuid == CBUUID(string: "fd4b0005-cce1-4033-93ce-002d5875f58a") else {
+      return
+    }
+"""
+if channel_guard not in h:
+    if h.count(channel_anchor) != 1:
+        raise SystemExit("Could not locate historical channel guard insertion point.")
+    h = h.replace(channel_anchor, channel_anchor + channel_guard, 1)
+
 command_old = """    switch packetType {
     case V5PacketType.commandResponse, V5PacketType.puffinCommandResponse:
       handleHistoricalCommandResponse(payload)
