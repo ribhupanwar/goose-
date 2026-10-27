@@ -108,6 +108,7 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patches/apply-recovery-engine.py" "$GOOSE_SOURCE_ROOT"
           python3 "$GITHUB_WORKSPACE/patches/apply-sleep-need-debt.py" "$GOOSE_SOURCE_ROOT"
           python3 "$GITHUB_WORKSPACE/patches/apply-daily-strain-cardio-load.py" "$GOOSE_SOURCE_ROOT"
+          python3 "$GITHUB_WORKSPACE/patches/diagnose-healthkit-entitlement.py" "$GOOSE_SOURCE_ROOT"
 
       - name: Select Xcode and show SDK
         shell: bash
