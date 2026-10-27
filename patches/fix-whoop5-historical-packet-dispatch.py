@@ -845,4 +845,161 @@ replacement = """  static func notificationHeaderCRCValid(_ bytes: [UInt8], devi
 pipeline_source = pipeline_source[:start] + replacement + pipeline_source[end:]
 pipeline.write_text(pipeline_source)
 
+# Edge's Gen5 live path includes compact REALTIME_DATA (0x28): unix seconds
+# at payload[2..6] and BPM at payload[8]. Goose previously treated packet 40
+# like a generic data record, so this common live-HR form never reached the HR
+# series pipeline.
+protocol_file = one("protocol.rs")
+protocol_source = protocol_file.read_text()
+summary_anchor = """    NormalHistory {
+        hr_present: Option<bool>,
+        marker_offset: Option<usize>,
+        marker_value: Option<u8>,
+    },
+"""
+summary_replacement = summary_anchor + """    RealtimeCompactHeartRate {
+        heart_rate: Option<u8>,
+    },
+"""
+if "RealtimeCompactHeartRate" not in protocol_source:
+    if protocol_source.count(summary_anchor) != 1:
+        raise SystemExit("Could not locate data packet summary enum.")
+    protocol_source = protocol_source.replace(summary_anchor, summary_replacement, 1)
+
+payload_match_anchor = """        PACKET_TYPE_REALTIME_DATA
+        | PACKET_TYPE_REALTIME_RAW_DATA
+        | PACKET_TYPE_HISTORICAL_DATA
+"""
+payload_match_replacement = """        PACKET_TYPE_REALTIME_DATA => Some(parse_realtime_compact_hr_payload(payload)),
+        PACKET_TYPE_REALTIME_RAW_DATA
+        | PACKET_TYPE_HISTORICAL_DATA
+"""
+if payload_match_replacement not in protocol_source:
+    if protocol_source.count(payload_match_anchor) != 1:
+        raise SystemExit("Could not locate realtime data payload dispatch.")
+    protocol_source = protocol_source.replace(payload_match_anchor, payload_match_replacement, 1)
+
+parse_anchor = """fn parse_data_packet_payload(payload: &[u8]) -> ParsedPayload {
+"""
+realtime_parser = """fn parse_realtime_compact_hr_payload(payload: &[u8]) -> ParsedPayload {
+    let mut warnings = Vec::new();
+    if payload.len() < 9 {
+        warnings.push("realtime_compact_hr_payload_too_short".to_string());
+    }
+    if read_u32_le(payload, 2).is_none() {
+        warnings.push("realtime_compact_hr_timestamp_missing".to_string());
+    }
+    let heart_rate = payload.get(8).copied();
+    let body_offset = 8.min(payload.len());
+
+    ParsedPayload::DataPacket {
+        // The second byte is the live stream/record discriminator. Preserve
+        // its actual wire value; the Edge decoder identifies this by packet 40.
+        packet_k: payload.get(1).copied(),
+        domain: Some("realtime_compact_heart_rate".to_string()),
+        status_or_stream: payload.get(1).copied(),
+        counter_or_page: None,
+        timestamp_seconds: read_u32_le(payload, 2),
+        timestamp_subseconds: None,
+        hr_marker_offset: Some(8),
+        hr_present_marker: heart_rate,
+        body_offset,
+        body_hex: hex::encode(&payload[body_offset..]),
+        body_summary: if payload.len() >= 9 {
+            Some(DataPacketBodySummary::RealtimeCompactHeartRate { heart_rate })
+        } else {
+            None
+        },
+        warnings,
+    }
+}
+
+"""
+if realtime_parser not in protocol_source:
+    if protocol_source.count(parse_anchor) != 1:
+        raise SystemExit("Could not locate data packet parser insertion point.")
+    protocol_source = protocol_source.replace(parse_anchor, realtime_parser + parse_anchor, 1)
+protocol_file.write_text(protocol_source)
+
+bridge = one("bridge.rs")
+bridge_source = bridge.read_text()
+heart_rate_anchor = """                Some(DataPacketBodySummary::RawMotionK10 { heart_rate, .. }) => *heart_rate,
+                _ => None,
+"""
+heart_rate_replacement = """                Some(DataPacketBodySummary::RawMotionK10 { heart_rate, .. }) => *heart_rate,
+                Some(DataPacketBodySummary::RealtimeCompactHeartRate { heart_rate }) => *heart_rate,
+                _ => None,
+"""
+if heart_rate_replacement not in bridge_source:
+    if bridge_source.count(heart_rate_anchor) != 1:
+        raise SystemExit("Could not locate compact bridge heart-rate mapping.")
+    bridge_source = bridge_source.replace(heart_rate_anchor, heart_rate_replacement, 1)
+
+body_kind_anchor = """        Some(DataPacketBodySummary::NormalHistory { .. }) => "normal_history",
+"""
+body_kind_replacement = body_kind_anchor + """        Some(DataPacketBodySummary::RealtimeCompactHeartRate { .. }) => "realtime_compact_heart_rate",
+"""
+if body_kind_replacement not in bridge_source:
+    if bridge_source.count(body_kind_anchor) != 1:
+        raise SystemExit("Could not locate bridge body summary kind mapping.")
+    bridge_source = bridge_source.replace(body_kind_anchor, body_kind_replacement, 1)
+bridge.write_text(bridge_source)
+
+publisher = one("GooseAppModel+PacketPublishing.swift")
+publisher_source = publisher.read_text()
+extract_anchor = """      let body = payload["body_summary"] as? [String: Any],
+      body["kind"] as? String == "raw_motion_k10"
+"""
+extract_replacement = """      let body = payload["body_summary"] as? [String: Any],
+      let bodyKind = body["kind"] as? String,
+      ["raw_motion_k10", "realtime_compact_heart_rate"].contains(bodyKind)
+"""
+if extract_replacement not in publisher_source:
+    if publisher_source.count(extract_anchor) != 1:
+        raise SystemExit("Could not locate live heart-rate extraction gate.")
+    publisher_source = publisher_source.replace(extract_anchor, extract_replacement, 1)
+publisher.write_text(publisher_source)
+
+tests = one("protocol_tests.rs")
+tests_source = tests.read_text()
+test_anchor = """#[test]
+fn parses_generic_command_response_payload_contract() {
+"""
+live_test = """#[test]
+fn parses_gen5_compact_realtime_heart_rate_packet_0x28() {
+    let timestamp = 1_797_000_000u32;
+    let mut payload = vec![PACKET_TYPE_REALTIME_DATA, 2];
+    payload.extend_from_slice(&timestamp.to_le_bytes());
+    payload.extend_from_slice(&[0, 0, 72]);
+    let frame = build_v5_payload_frame(&payload);
+
+    let parsed = parse_frame(DeviceType::Goose, &frame).unwrap();
+    assert_eq!(parsed.packet_type, Some(PACKET_TYPE_REALTIME_DATA));
+    let Some(ParsedPayload::DataPacket {
+        packet_k,
+        domain,
+        timestamp_seconds,
+        body_summary,
+        ..
+    }) = parsed.parsed_payload else {
+        panic!("expected compact realtime data packet");
+    };
+    assert_eq!(packet_k, Some(2));
+    assert_eq!(domain.as_deref(), Some("realtime_compact_heart_rate"));
+    assert_eq!(timestamp_seconds, Some(timestamp));
+    assert_eq!(
+        body_summary,
+        Some(DataPacketBodySummary::RealtimeCompactHeartRate {
+            heart_rate: Some(72),
+        })
+    );
+}
+
+"""
+if live_test not in tests_source:
+    if tests_source.count(test_anchor) != 1:
+        raise SystemExit("Could not locate Rust protocol test insertion point for live HR.")
+    tests_source = tests_source.replace(test_anchor, live_test + test_anchor, 1)
+tests.write_text(tests_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
