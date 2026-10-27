@@ -1586,4 +1586,39 @@ tests_source = tests_source.replace(
 )
 tests.write_text(tests_source)
 
+# Exercise the exact Edge v18 offsets through the compact bridge contract,
+# not only the lower-level packet parser.
+bridge = one("bridge.rs")
+bridge_source = bridge.read_text()
+bridge_test_anchor = """    #[test]
+    fn capture_arrival_next_focus_includes_recovery_sensor_capture_actions() {
+"""
+bridge_test = """    #[test]
+    fn compact_summary_extracts_gen5_v18_hr_and_rr_intervals() {
+        let timestamp = 1_797_000_000u32;
+        let mut payload = vec![PACKET_TYPE_HISTORICAL_DATA, 18, 0];
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        payload.extend_from_slice(&timestamp.to_le_bytes());
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload.extend_from_slice(&[0, 150, 4]);
+        for rr in [800i16, 810, 805, 795] {
+            payload.extend_from_slice(&rr.to_le_bytes());
+        }
+
+        let frame = crate::protocol::build_v5_payload_frame(&payload);
+        let parsed = crate::protocol::parse_frame(DeviceType::Goose, &frame).unwrap();
+        let compact = compact_parsed_frame_summary(&parsed);
+
+        assert_eq!(compact["heart_rate"].as_u64(), Some(150));
+        let rr: Vec<u16> = serde_json::from_value(compact["rr_intervals_ms"].clone()).unwrap();
+        assert_eq!(rr, vec![800, 810, 805, 795]);
+    }
+
+"""
+if bridge_test not in bridge_source:
+    if bridge_source.count(bridge_test_anchor) != 1:
+        raise SystemExit("Could not locate bridge unit test insertion point.")
+    bridge_source = bridge_source.replace(bridge_test_anchor, bridge_test + bridge_test_anchor, 1)
+bridge.write_text(bridge_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
