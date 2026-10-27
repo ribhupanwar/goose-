@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ditto -c -k --sequesterRsrc "$GOOSE_SOURCE_ROOT" "$RUNNER_TEMP/Goose-source-inspection.zip"
+          ditto -c -k --sequesterRsrc "$GOOSE_SOURCE_ROOT" "$GITHUB_WORKSPACE/Goose-source-inspection.zip"
 
       - name: Upload extracted Goose source
         uses: actions/upload-artifact@v4
