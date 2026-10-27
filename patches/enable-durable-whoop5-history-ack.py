@@ -287,10 +287,22 @@ hr_flush = """  func flush() -> Bool {
     stateLock.lock()
     pendingWrite?.cancel()
     pendingWrite = nil
+    var shouldPostUpdate = false
+    if !pendingHistoricalSamples.isEmpty {
+      samples.append(contentsOf: pendingHistoricalSamples)
+      pendingHistoricalSamples.removeAll(keepingCapacity: true)
+      samples.sort { $0.capturedAt < $1.capturedAt }
+      let countBeforePrune = samples.count
+      prune(relativeTo: Date())
+      if samples.count != countBeforePrune {
+        sampleIDs = Set(samples.map(\\.id))
+      }
+      shouldPostUpdate = markUpdateNotificationIfNeeded()
+    }
     let destination = url
     let payload = HeartRateSeriesFile(version: 1, samples: samples)
     stateLock.unlock()
-    return writeQueue.sync {
+    let saved = writeQueue.sync {
       do {
         try FileManager.default.createDirectory(
           at: destination.deletingLastPathComponent(),
@@ -305,6 +317,12 @@ hr_flush = """  func flush() -> Bool {
         return false
       }
     }
+    if saved && shouldPostUpdate {
+      DispatchQueue.main.async {
+        NotificationCenter.default.post(name: Self.didUpdateNotification, object: self)
+      }
+    }
+    return saved
   }
 
 """
@@ -316,13 +334,31 @@ if "func flush() -> Bool" not in store_source:
     second = store_source.find("  private func schedulePersist() {", first + len(hr_flush) + 1)
     if second < 0:
         raise SystemExit("Could not locate HRV store persistence method.")
-    hrv_flush = hr_flush.replace(
-      "HeartRateSeriesFile(version: 1, samples: samples)",
-      "HRVSeriesFile(version: 1, samples: samples)"
-    ).replace(
-      "GooseSwift heart-rate flush failed",
-      "GooseSwift HRV flush failed"
-    )
+    hrv_flush = """  func flush() -> Bool {
+    stateLock.lock()
+    pendingWrite?.cancel()
+    pendingWrite = nil
+    let destination = url
+    let payload = HRVSeriesFile(version: 1, samples: samples)
+    stateLock.unlock()
+    return writeQueue.sync {
+      do {
+        try FileManager.default.createDirectory(
+          at: destination.deletingLastPathComponent(),
+          withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(payload).write(to: destination, options: .atomic)
+        return true
+      } catch {
+        NSLog("GooseSwift HRV flush failed: \\\\(String(describing: error))")
+        return false
+      }
+    }
+  }
+
+"""
     store_source = store_source[:second] + hrv_flush + store_source[second:]
 stores.write_text(store_source)
 
