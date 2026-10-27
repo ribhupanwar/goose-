@@ -68,6 +68,7 @@ reset_replacement = reset_anchor + """    clientHelloResponseConfirmedForCurrent
     clientHelloResponseTimeoutWorkItem?.cancel()
     clientHelloResponseTimeoutWorkItem = nil
     v5NotificationRegistrationScheduled.removeAll()
+    v5NotificationFrameBuffers.removeAll()
 """
 if reset_replacement not in d:
     if d.count(reset_anchor) != 2:
