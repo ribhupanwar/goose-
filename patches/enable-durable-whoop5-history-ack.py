@@ -234,6 +234,9 @@ archive = """final class GooseHistoricalSyncBatchArchive {
         ]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         try data.write(to: url, options: .atomic)
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.synchronize()
+        try handle.close()
         let check = try Data(contentsOf: url)
         guard check == data,
               let decoded = try JSONSerialization.jsonObject(with: check) as? [String: Any],
