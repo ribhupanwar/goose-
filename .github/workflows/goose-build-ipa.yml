@@ -43,20 +43,6 @@ jobs:
           echo "Found project at: $PROJECT_FILE"
           ls -la "$SOURCE_ROOT"
 
-      - name: Archive extracted Goose source for inspection
-        shell: bash
-        run: |
-          set -euo pipefail
-          ditto -c -k --sequesterRsrc "$GOOSE_SOURCE_ROOT" "$GITHUB_WORKSPACE/Goose-source-inspection.zip"
-
-      - name: Upload extracted Goose source
-        uses: actions/upload-artifact@v4
-        with:
-          name: Goose-source-inspection
-          path: Goose-source-inspection.zip
-          if-no-files-found: error
-          retention-days: 3
-
       - name: Fix WHOOP 5.0 historical packet dispatch
         shell: bash
         run: |
@@ -68,6 +54,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/patches/diagnose-whoop5-historical-sync.py" "$GOOSE_SOURCE_ROOT" | tee "$RUNNER_TEMP/whoop5-sync-diagnostics.txt"
+
+      - name: Run Rust protocol and data-core tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path "$GOOSE_SOURCE_ROOT/Rust/core/Cargo.toml"
 
       - name: Configure Apple Health permissions
         shell: bash
