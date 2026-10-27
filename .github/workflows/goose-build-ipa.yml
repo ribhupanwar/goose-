@@ -49,12 +49,6 @@ jobs:
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/patches/fix-whoop5-historical-packet-dispatch.py" "$GOOSE_SOURCE_ROOT"
 
-      - name: Import WHOOP 5 v18 historical HR
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 "$GITHUB_WORKSPACE/patches/import-whoop5-v18-history.py" "$GOOSE_SOURCE_ROOT"
-
       - name: Diagnose WHOOP 5.0 historical sync implementation
         shell: bash
         run: |
