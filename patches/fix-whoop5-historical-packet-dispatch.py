@@ -523,8 +523,9 @@ dispatch_anchor = """    guard notificationCharacteristicIDs.contains(characteri
     }
 
 """
-dispatch_add = """    if clientHelloSentForCurrentConnection,
-       !clientHelloResponseConfirmedForCurrentConnection,
+dispatch_add = """    if (clientHelloSentForCurrentConnection
+        && !clientHelloResponseConfirmedForCurrentConnection
+        || pendingClockCommand != nil),
        characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a") {
       return true
     }
