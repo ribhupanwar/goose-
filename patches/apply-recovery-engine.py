@@ -99,8 +99,8 @@ replace_once(
     let confidence = hrvBase.sampleCount >= 20 && rhrBase.sampleCount >= 20 ? "Strong" : "Building"
     return HealthKitRecoveryAssessment(
       score: score,
-      hrvContribution: Int((50 + 25 * hrvZ).clamped(to: 0...100).rounded()),
-      restingHRContribution: Int((50 + 25 * rhrZ).clamped(to: 0...100).rounded()),
+      hrvContribution: Int(min(max(50 + 25 * hrvZ, 0.0), 100.0).rounded()),
+      restingHRContribution: Int(min(max(50 + 25 * rhrZ, 0.0), 100.0).rounded()),
       status: status,
       confidence: confidence,
       calibrationStatus: calibration.status,
