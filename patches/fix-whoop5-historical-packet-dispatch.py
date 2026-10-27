@@ -172,4 +172,165 @@ if ack_replacement not in commands_source:
 
 commands.write_text(commands_source)
 
+# The shared Rust notification parser also needs Edge-style deframing:
+# validate the header before trusting its length, and resync after a bad payload
+# CRC so one damaged frame cannot swallow the next valid BLE notification.
+protocol_file = one("protocol.rs")
+protocol_source = protocol_file.read_text()
+feed_anchor = """    pub fn feed(&mut self, chunk: &[u8]) -> DeframeResult {
+        self.buffer.extend_from_slice(chunk);
+        let mut frames = Vec::new();
+        let mut dropped = self.drop_until_frame_start();
+
+        loop {
+            let Some(expected_len) = self.device_type.expected_frame_len(&self.buffer) else {
+                break;
+            };
+            if self.buffer.len() < expected_len {
+                break;
+            }
+            frames.push(self.buffer[..expected_len].to_vec());
+            self.buffer.drain(..expected_len);
+            dropped += self.drop_until_frame_start();
+        }
+
+        DeframeResult {
+            frames,
+            buffered_len: self.buffer.len(),
+            dropped_prefix_len: dropped,
+        }
+    }
+"""
+feed_replacement = """    pub fn feed(&mut self, chunk: &[u8]) -> DeframeResult {
+        self.buffer.extend_from_slice(chunk);
+        let mut frames = Vec::new();
+        let mut dropped = self.drop_until_frame_start();
+        let header_len = self.device_type.header_len();
+
+        loop {
+            if self.buffer.len() < header_len {
+                break;
+            }
+
+            // Header CRC protects the declared length. Do not let a damaged
+            // length consume a large portion of the next valid frame.
+            if !self.header_crc_valid() {
+                self.buffer.drain(..1);
+                dropped += 1 + self.drop_until_frame_start();
+                continue;
+            }
+
+            let Some(expected_len) = self.device_type.expected_frame_len(&self.buffer) else {
+                break;
+            };
+            if expected_len < header_len + 4 || expected_len > 4096 {
+                self.buffer.drain(..1);
+                dropped += 1 + self.drop_until_frame_start();
+                continue;
+            }
+            if self.buffer.len() < expected_len {
+                break;
+            }
+
+            let frame = self.buffer[..expected_len].to_vec();
+            frames.push(frame.clone());
+            if !Self::payload_crc_valid(&frame, header_len) {
+                // Keep the corrupt frame visible to diagnostics, but search
+                // from the next byte for a fresh SOF instead of trusting its
+                // length and swallowing subsequent good frames.
+                self.buffer.drain(..1);
+                dropped += 1 + self.drop_until_frame_start();
+                continue;
+            }
+
+            self.buffer.drain(..expected_len);
+            dropped += self.drop_until_frame_start();
+        }
+
+        DeframeResult {
+            frames,
+            buffered_len: self.buffer.len(),
+            dropped_prefix_len: dropped,
+        }
+    }
+
+    fn header_crc_valid(&self) -> bool {
+        match self.device_type {
+            DeviceType::Gen4 => {
+                self.buffer.len() >= 4
+                    && crc8(&self.buffer[1..3]) == self.buffer[3]
+            }
+            DeviceType::Maverick | DeviceType::Puffin | DeviceType::Goose => {
+                self.buffer.len() >= 8
+                    && crc16_modbus(&self.buffer[..6])
+                        == u16::from_le_bytes([self.buffer[6], self.buffer[7]])
+            }
+        }
+    }
+
+    fn payload_crc_valid(frame: &[u8], header_len: usize) -> bool {
+        if frame.len() < header_len + 4 {
+            return false;
+        }
+        let payload_end = frame.len() - 4;
+        let expected = u32::from_le_bytes([
+            frame[payload_end],
+            frame[payload_end + 1],
+            frame[payload_end + 2],
+            frame[payload_end + 3],
+        ]);
+        crc32fast::hash(&frame[header_len..payload_end]) == expected
+    }
+"""
+if feed_replacement not in protocol_source:
+    if protocol_source.count(feed_anchor) != 1:
+        raise SystemExit("Could not uniquely locate Rust FrameAccumulator.feed.")
+    protocol_source = protocol_source.replace(feed_anchor, feed_replacement, 1)
+protocol_file.write_text(protocol_source)
+
+tests = one("protocol_tests.rs")
+tests_source = tests.read_text()
+test_anchor = """#[test]
+fn payload_crc_mismatch_preserves_parseable_header_with_warning() {
+"""
+test = """#[test]
+fn deframer_resynchronizes_after_bad_payload_crc_and_keeps_next_frame() {
+    let mut corrupt = hex::decode(GET_HELLO_FRAME).unwrap();
+    let last = corrupt.len() - 1;
+    corrupt[last] ^= 0xff;
+    let good = hex::decode(GET_HELLO_FRAME).unwrap();
+    let mut stream = corrupt;
+    stream.extend_from_slice(&good);
+
+    let mut accumulator = FrameAccumulator::new(DeviceType::Goose);
+    let result = accumulator.feed(&stream);
+
+    assert_eq!(result.frames.len(), 2);
+    assert!(!parse_frame(DeviceType::Goose, &result.frames[0]).unwrap().payload_crc_valid);
+    assert_eq!(result.frames[1], good);
+    assert_eq!(result.buffered_len, 0);
+}
+
+#[test]
+fn deframer_rejects_bad_header_crc_without_losing_next_frame() {
+    let mut corrupt = hex::decode(GET_HELLO_FRAME).unwrap();
+    corrupt[6] ^= 0xff;
+    let good = hex::decode(GET_HELLO_FRAME).unwrap();
+    let mut stream = corrupt;
+    stream.extend_from_slice(&good);
+
+    let mut accumulator = FrameAccumulator::new(DeviceType::Goose);
+    let result = accumulator.feed(&stream);
+
+    assert_eq!(result.frames, vec![good]);
+    assert_eq!(result.buffered_len, 0);
+}
+
+"""
+if test not in tests_source:
+    if tests_source.count(test_anchor) != 1:
+        raise SystemExit("Could not uniquely locate Rust protocol test insertion point.")
+    tests_source = tests_source.replace(test_anchor, test + test_anchor, 1)
+tests.write_text(tests_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
