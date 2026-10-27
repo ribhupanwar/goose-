@@ -1547,8 +1547,8 @@ if prune_replacement not in stores_source:
         raise SystemExit("Expected both HR and HRV prune methods.")
     stores_source = stores_source.replace(prune_anchor, prune_replacement)
 hr_prune_union = prune_replacement.replace(
-    "sampleIDs = Set(samples.map(\\\\.id))",
-    "sampleIDs = Set(samples.map(\\\\.id)).union(pendingHistoricalSamples.map(\\\\.id))",
+    "sampleIDs = Set(samples.map(\\.id))",
+    "sampleIDs = Set(samples.map(\\.id)).union(pendingHistoricalSamples.map(\\.id))",
 )
 if hr_prune_union not in stores_source:
     stores_source = stores_source.replace(prune_replacement, hr_prune_union, 1)
