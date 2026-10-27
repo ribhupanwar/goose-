@@ -28,6 +28,7 @@ new = """    var types = Set<HKObjectType>()
       if let type = HKObjectType.quantityType(forIdentifier: identifier) { types.insert(type) }
     }
     if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) { types.insert(sleep) }
+    types.insert(HKObjectType.workoutType())
     return types"""
 if old not in s: raise SystemExit("HealthKit readTypes anchor missing")
 s = s.replace(old, new, 1)
