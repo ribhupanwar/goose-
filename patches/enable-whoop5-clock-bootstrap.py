@@ -43,6 +43,7 @@ guard_old = """    guard isHistoricalSyncing else {
     }
 """
 guard_new = """    guard isHistoricalSyncing
+      || pendingClockCommand != nil
       || (clientHelloSentForCurrentConnection && !clientHelloResponseConfirmedForCurrentConnection) else {
       return
     }
@@ -195,6 +196,7 @@ clock_replacement = """  func handleClockValue(_ value: Data, characteristic: CB
     if supportsV5HistoricalSync,
        characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a"),
        (isHistoricalSyncing
+         || pendingClockCommand != nil
          || (clientHelloSentForCurrentConnection && !clientHelloResponseConfirmedForCurrentConnection)) {
       return
     }
