@@ -82,9 +82,9 @@ complete_replacement = """    historyEndAckQueued = false
     historyStartReceived = false
 """
 if complete_replacement not in h:
-    if h.count(complete_anchor) != 1:
-        raise SystemExit("Could not locate historical completion reset.")
-    h = h.replace(complete_anchor, complete_replacement, 1)
+    if h.count(complete_anchor) < 1:
+        raise SystemExit("Could not locate historical completion/failure reset.")
+    h = h.replace(complete_anchor, complete_replacement)
 handlers.write_text(h)
 
 # Every new transfer starts with an empty durable-batch state. ACK is enabled
