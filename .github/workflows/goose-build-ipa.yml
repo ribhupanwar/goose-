@@ -49,6 +49,12 @@ jobs:
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/patches/fix-whoop5-historical-packet-dispatch.py" "$GOOSE_SOURCE_ROOT"
 
+      - name: Enable durable WHOOP 5 history ACK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/patches/enable-durable-whoop5-history-ack.py" "$GOOSE_SOURCE_ROOT"
+
       - name: Diagnose WHOOP 5.0 historical sync implementation
         shell: bash
         run: |
