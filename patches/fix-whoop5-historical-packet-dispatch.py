@@ -160,7 +160,7 @@ if "v5NotificationFrameBuffers.removeAll()" not in commands_source:
 # historical packets and emits signal diagnostics, but has no atomic durable
 # record+token commit path comparable to Edge's DrainController. Keep ACK off
 # until that storage path exists and commits before HISTORY_END is answered.
-ack_anchor = "    acknowledgeHistoricalDataResult: Bool = true\\n"
+ack_anchor = "    acknowledgeHistoricalDataResult: Bool = true\n"
 ack_replacement = """    // Safety: no HISTORY_END ACK until the historical records have been
     // durably committed. An ACK can advance the strap's trim cursor.
     acknowledgeHistoricalDataResult: Bool = false
