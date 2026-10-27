@@ -119,10 +119,6 @@ p = root / "HealthView.swift"
 v = p.read_text()
 start = '''      if let assessment = store.healthKitTrainingSnapshot?.recoveryAssessment {'''
 end = '''      LazyVGrid(columns: columns, spacing: 10) {'''
-if start not in v or end not in v:
-    raise SystemExit("Recovery UI block anchors missing")
-a = v.index(start)
-b = v.index(end, a)
 recovery_ui = '''      if let assessment = store.healthKitTrainingSnapshot?.recoveryAssessment {
         VStack(alignment: .leading, spacing: 8) {
           HStack(alignment: .firstTextBaseline) {
@@ -159,6 +155,16 @@ recovery_ui = '''      if let assessment = store.healthKitTrainingSnapshot?.reco
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
       }
 '''
-v = v.slice(0, a) + recovery_ui + v.slice(b)
+if start in v and end in v:
+    a = v.index(start)
+    b = v.index(end, a)
+    v = v[:a] + recovery_ui + v[b:]
+    print("Inserted recovery UI into the legacy HealthView layout.")
+else:
+    section_anchor = '''      LazyVGrid(columns: columns, spacing: 10) {'''
+    if section_anchor in v and "HealthKitTrainingSignalsSection" in v:
+        v = v.replace(section_anchor, recovery_ui + section_anchor, 1)
+        print("Inserted recovery UI into Apple Health training signals section.")
+    else:
+        print("Recovery assessment model added; current HealthView layout has no safe insertion anchor, UI deferred.")
 p.write_text(v)
-print("Added fresh-sample robust-z readiness, missing-data abstention, and calibrated score history.")
