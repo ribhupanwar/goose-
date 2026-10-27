@@ -666,12 +666,14 @@ if hello_handler not in historical_source:
     if historical_source.count(handler_anchor) != 1:
         raise SystemExit("Could not locate historical handler insertion point.")
     historical_source = historical_source.replace(handler_anchor, hello_handler + handler_anchor, 1)
-method_open = "  func handleHistoricalSyncValue(_ value: Data, characteristic: CBCharacteristic) {\n"
-channel_expression = 'characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a")'
+method_open = "  func handleHistoricalSyncValue(_ value: Data, characteristic: CBCharacteristic) {\\n"
 if method_open not in historical_source:
     raise SystemExit("Could not locate historical sync handler declaration.")
 method_start = historical_source.index(method_open)
 method_tail = historical_source[method_start:]
+# Channel filtering belongs in the notification dispatcher, not this handler.
+# Once routed here, command/event/data frames all need parsing.
+# Remove the obsolete unused local channel set inserted by earlier patch versions.
 channel_declaration = """    // Gen5 history uses three notification characteristics: command, events, and data.
     // Packet 47 arrives on fd4b0005; a command-only guard silently drops it.
     let historicalChannels: Set<CBUUID> = [
@@ -680,16 +682,9 @@ channel_declaration = """    // Gen5 history uses three notification characteris
       CBUUID(string: "fd4b0005-cce1-4033-93ce-002d5875f58a")
     ]
 """
-if "let historicalChannels: Set<CBUUID>" not in method_tail:
-    historical_source = historical_source.replace(method_open, method_open + channel_declaration, 1)
-    method_start = historical_source.index(method_open)
-    method_tail = historical_source[method_start:]
-if channel_expression not in method_tail:
-    print("DEBUG historical handler tail:", repr(method_tail[:2200]))
-    raise SystemExit("Could not locate Gen5 command characteristic expression after handleHistoricalSyncValue.")
-method_tail = method_tail.replace(channel_expression, "historicalChannels.contains(characteristic.uuid)", 1)
-historical_source = historical_source[:method_start] + method_tail
+historical_source = historical_source.replace(method_open + channel_declaration, method_open, 1)
 historical.write_text(historical_source)
+
 
 # Manual sync is also blocked until the same verified hello response is received.
 commands = one("GooseBLEClient+HistoricalCommands.swift")
