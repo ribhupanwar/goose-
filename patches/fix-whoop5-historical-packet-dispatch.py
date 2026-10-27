@@ -1750,4 +1750,54 @@ pipeline_source = pipeline_source.replace(
 )
 pipeline.write_text(pipeline_source)
 
+
+# Complete device-generation propagation across both event and data-signal
+# decoders. The earlier compatibility patch changed only the first overload;
+# keep both parsed and compact paths consistent.
+events_source = events.read_text()
+events_source = events_source.replace(
+    "static func fromParsedFrame(_ parsed: [String: Any], capturedAt: Date)",
+    "static func fromParsedFrame(_ parsed: [String: Any], capturedAt: Date, deviceType: String)",
+)
+events_source = events_source.replace(
+    "static func fromCompactSummary(_ compact: NotificationFrameCompactSummary, capturedAt: Date)",
+    "static func fromCompactSummary(_ compact: NotificationFrameCompactSummary, capturedAt: Date, deviceType: String)",
+)
+for old_call, new_call in [
+    ("R21MotionCandidate.from(packetK: packetK, body: bodyData)", "R21MotionCandidate.from(packetK: packetK, body: bodyData, deviceType: deviceType)"),
+    ("RawBodyDiagnostic.from(packetK: packetK, body: bodyData)", "RawBodyDiagnostic.from(packetK: packetK, body: bodyData, deviceType: deviceType)"),
+]:
+    events_source = events_source.replace(old_call, new_call)
+events.write_text(events_source)
+
+publisher_source = publisher.read_text()
+publisher_source = publisher_source.replace(
+    "static func extractWhoopEvent(from parsed: [String: Any], capturedAt: Date)",
+    "static func extractWhoopEvent(from parsed: [String: Any], capturedAt: Date, deviceType: String)",
+)
+publisher_source = publisher_source.replace(
+    "WhoopEventSample.fromParsedFrame(parsed, capturedAt: capturedAt)",
+    "WhoopEventSample.fromParsedFrame(parsed, capturedAt: capturedAt, deviceType: deviceType)",
+)
+publisher_source = publisher_source.replace(
+    "static func extractWhoopEvent(from compact: NotificationFrameCompactSummary?, capturedAt: Date)",
+    "static func extractWhoopEvent(from compact: NotificationFrameCompactSummary?, capturedAt: Date, deviceType: String)",
+)
+publisher_source = publisher_source.replace(
+    "WhoopEventSample.fromCompactSummary($0, capturedAt: capturedAt)",
+    "WhoopEventSample.fromCompactSummary($0, capturedAt: capturedAt, deviceType: deviceType)",
+)
+publisher.write_text(publisher_source)
+
+pipeline_source = pipeline.read_text()
+pipeline_source = pipeline_source.replace(
+    "extractWhoopEvent(from: parsed, capturedAt: event.capturedAt)",
+    "extractWhoopEvent(from: parsed, capturedAt: event.capturedAt, deviceType: event.rustDeviceType)",
+)
+pipeline_source = pipeline_source.replace(
+    "extractWhoopEvent(from: compact, capturedAt: event.capturedAt)",
+    "extractWhoopEvent(from: compact, capturedAt: event.capturedAt, deviceType: event.rustDeviceType)",
+)
+pipeline.write_text(pipeline_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
