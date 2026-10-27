@@ -1002,4 +1002,70 @@ if live_test not in tests_source:
     tests_source = tests_source.replace(test_anchor, live_test + test_anchor, 1)
 tests.write_text(tests_source)
 
+# Feed the compact live HR into the same persisted signal/metric paths as
+# R10, and keep exhaustive Rust summary/export matches aware of this variant.
+correlation = one("capture_correlation.rs")
+correlation_source = correlation.read_text()
+correlation_anchor = """        DataPacketBodySummary::NormalHistory { .. } => "normal_history",
+"""
+correlation_replacement = correlation_anchor + """        DataPacketBodySummary::RealtimeCompactHeartRate { .. } => "realtime_compact_heart_rate",
+"""
+if correlation_replacement not in correlation_source:
+    if correlation_source.count(correlation_anchor) != 1:
+        raise SystemExit("Could not locate capture correlation summary mapping.")
+    correlation_source = correlation_source.replace(correlation_anchor, correlation_replacement, 1)
+correlation.write_text(correlation_source)
+
+metrics = one("metric_features.rs")
+metrics_source = metrics.read_text()
+metric_anchor = """        DataPacketBodySummary::RawMotionK10 {
+            heart_rate: Some(heart_rate),
+            ..
+        } => Some(HeartRatePlan {
+"""
+metric_variant = """        DataPacketBodySummary::RealtimeCompactHeartRate {
+            heart_rate: Some(heart_rate),
+        } => Some(HeartRatePlan {
+            body_summary_kind: "realtime_compact_heart_rate",
+            source_signal: "realtime_compact_heart_rate",
+            quality_flag: "preliminary_realtime_compact_heart_rate",
+            marker_offset: 8,
+            marker_value: heart_rate,
+            device_timestamp_seconds: timestamp_seconds,
+            device_timestamp_subseconds: timestamp_subseconds,
+        }),
+"""
+if metric_variant not in metrics_source:
+    if metrics_source.count(metric_anchor) != 1:
+        raise SystemExit("Could not locate metric heart-rate plan insertion point.")
+    metrics_source = metrics_source.replace(metric_anchor, metric_variant + metric_anchor, 1)
+metrics.write_text(metrics_source)
+
+export_file = one("export.rs")
+export_source = export_file.read_text()
+export_anchor = """            DataPacketBodySummary::R17OpticalOrLabradorFiltered {
+                samples, warnings, ..
+            } => {
+"""
+export_variant = """            DataPacketBodySummary::RealtimeCompactHeartRate { heart_rate } => {
+                if let Some(value) = heart_rate.filter(|value| *value > 0) {
+                    rows.push(sensor_u8_sample(
+                        &context,
+                        "realtime_compact_heart_rate",
+                        "live_compact_heart_rate",
+                        0,
+                        8,
+                        value,
+                        "bpm_candidate",
+                        vec!["raw_live_hr".to_string()],
+                    ));
+                }
+            }
+"""
+if export_variant not in export_source:
+    if export_source.count(export_anchor) != 1:
+        raise SystemExit("Could not locate sensor export match insertion point.")
+    export_source = export_source.replace(export_anchor, export_variant + export_anchor, 1)
+export_file.write_text(export_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
