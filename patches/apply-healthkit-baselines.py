@@ -113,18 +113,9 @@ replace_once(
 
   private static func latest(_ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit) async -> Double? {''',
 "baseline query helper")
-replace_once(
-'''        let mean = values.reduce(0, +) / Double(values.count)
-        continuation.resume(returning: HealthKitRollingBaseline(mean: mean, sampleCount: values.count, windowDays: days))''',
-'''        guard let center = median(values),
-              let rawMAD = median(values.map { abs($0 - center) }) else {
-          continuation.resume(returning: nil)
-          return
-        }
-        continuation.resume(returning: HealthKitRollingBaseline(
-          median: center, mad: rawMAD, sampleCount: values.count, windowDays: days
-        ))''',
-"median/MAD baseline calculation")
+# rollingBaseline() above already computes median + MAD.
+# The old mean-based replacement below was redundant and failed after the
+# helper was introduced earlier in this same script.
 p.write_text(s)
 
 p = root / "HealthView.swift"
