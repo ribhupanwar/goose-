@@ -21,11 +21,15 @@ guard = """    guard notificationCharacteristicIDs.contains(characteristic.uuid)
     }
 
 """
-dispatch = """    // Historical data is delivered on fd4b0005. Keep this channel on the
-    // sync path while an offload is active; do not move every sensor stream
-    // onto the main queue.
-    if isHistoricalSyncing,
-       characteristic.uuid == CBUUID(string: "fd4b0005-cce1-4033-93ce-002d5875f58a") {
+dispatch = """    // Gen5 command, event, and data channels can split frames across
+    // notifications. Keep only these three protocol channels on the sync
+    // state-machine path; unrelated standard sensors stay off-main.
+    let historicalChannels: Set<CBUUID> = [
+      CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a"),
+      CBUUID(string: "fd4b0004-cce1-4033-93ce-002d5875f58a"),
+      CBUUID(string: "fd4b0005-cce1-4033-93ce-002d5875f58a")
+    ]
+    if isHistoricalSyncing, historicalChannels.contains(characteristic.uuid) {
       return true
     }
 
