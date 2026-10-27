@@ -370,11 +370,30 @@ flush_method = """  func flushHistoricalNotificationPipeline(completion: @escapi
         DispatchQueue.main.async { completion(false) }
         return
       }
-      self.notificationParseQueue.async {
-        let heartRateSaved = HeartRateSeriesStore.shared.flush()
-        let hrvSaved = HRVSeriesStore.shared.flush()
-        DispatchQueue.main.async {
-          completion(heartRateSaved && hrvSaved)
+      self.notificationParseQueue.async { [weak self] in
+        guard let self else {
+          DispatchQueue.main.async { completion(false) }
+          return
+        }
+        // Parsed HR frames that require main-thread handling are queued from
+        // notificationParseQueue. Drain those main-queue updates before the
+        // durable store flush, then return to the parse queue for disk I/O.
+        DispatchQueue.main.async { [weak self] in
+          guard let self else {
+            completion(false)
+            return
+          }
+          self.notificationParseQueue.async { [weak self] in
+            guard let self else {
+              DispatchQueue.main.async { completion(false) }
+              return
+            }
+            let heartRateSaved = HeartRateSeriesStore.shared.flush()
+            let hrvSaved = HRVSeriesStore.shared.flush()
+            DispatchQueue.main.async {
+              completion(heartRateSaved && hrvSaved)
+            }
+          }
         }
       }
     }
