@@ -82,6 +82,12 @@ jobs:
         with:
           targets: aarch64-apple-ios
 
+      - name: Run Rust core and BLE protocol tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path "$GOOSE_SOURCE_ROOT/Rust/core/Cargo.toml" --tests
+
       - name: Check project files and scheme
         shell: bash
         run: |
