@@ -1575,4 +1575,15 @@ if prune_replacement not in stores_source:
     stores_source = stores_source.replace(prune_anchor, prune_replacement)
 stores.write_text(stores_source)
 
+# Edge defines 0x28 exclusively as compact live HR. K21 grouped motion
+# records belong to REALTIME_RAW_DATA (0x2B), not 0x28; correct the two old
+# Goose fixtures that conflated those packet types.
+tests = one("protocol_tests.rs")
+tests_source = tests.read_text()
+tests_source = tests_source.replace(
+    "payload[0] = PACKET_TYPE_REALTIME_DATA;",
+    "payload[0] = PACKET_TYPE_REALTIME_RAW_DATA;",
+)
+tests.write_text(tests_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
