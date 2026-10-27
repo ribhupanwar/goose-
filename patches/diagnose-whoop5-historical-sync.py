@@ -8,7 +8,8 @@ terms = re.compile(
     r"GET_DATA_RANGE|SEND_HISTORICAL_DATA|HISTORICAL_DATA_RESULT|"
     r"historical_metadata_idle|historical.*(packet|sync)|"
     r"puffinCommandFrame|crc16Modbus|DATA_FROM_STRAP|"
-    r"setNotifyValue|didUpdateValueFor|0x2F|0x22|0x16",
+    r"setNotifyValue|didUpdateValueFor|shouldDispatchNotificationSideEffects|"
+    r"notificationCharacteristicIDs|historicalChannels|0x2F|0x22|0x16",
     re.IGNORECASE,
 )
 extensions = {".swift", ".rs", ".m", ".mm", ".h", ".kt", ".java"}
