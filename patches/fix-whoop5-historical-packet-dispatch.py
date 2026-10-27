@@ -160,18 +160,15 @@ if "v5NotificationFrameBuffers.removeAll()" not in commands_source:
 # historical packets and emits signal diagnostics, but has no atomic durable
 # record+token commit path comparable to Edge's DrainController. Keep ACK off
 # until that storage path exists and commits before HISTORY_END is answered.
-ack_file = commands("GooseBLEClient+HistoricalCommands.swift")
-ack_source = ack_file.read_text()
-ack_anchor = "    acknowledgeHistoricalDataResult: Bool = true\n"
+ack_anchor = "    acknowledgeHistoricalDataResult: Bool = true\\n"
 ack_replacement = """    // Safety: no HISTORY_END ACK until the historical records have been
     // durably committed. An ACK can advance the strap's trim cursor.
     acknowledgeHistoricalDataResult: Bool = false
 """
-if ack_replacement not in ack_source:
-    if ack_source.count(ack_anchor) != 1:
+if ack_replacement not in commands_source:
+    if commands_source.count(ack_anchor) != 1:
         raise SystemExit("Could not uniquely locate historical ACK default.")
-    ack_source = ack_source.replace(ack_anchor, ack_replacement, 1)
-ack_file.write_text(ack_source)
+    commands_source = commands_source.replace(ack_anchor, ack_replacement, 1)
 
 commands.write_text(commands_source)
 
