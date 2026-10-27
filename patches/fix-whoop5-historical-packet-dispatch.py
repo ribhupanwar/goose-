@@ -1369,6 +1369,7 @@ hr_samples_anchor = """  private var samples: [HeartRateSamplePoint]
 """
 hr_samples_replacement = """  private var samples: [HeartRateSamplePoint]
   private var sampleIDs: Set<String> = []
+  private var pendingHistoricalSamples: [HeartRateSamplePoint] = []
   private var pendingWrite: DispatchWorkItem?
 """
 if hr_samples_replacement not in stores_source:
@@ -1415,20 +1416,11 @@ hr_historical = """  func appendHistorical(bpm: Int, source: String, capturedAt:
       stateLock.unlock()
       return false
     }
-    let insertionIndex = samples.firstIndex(where: { $0.capturedAt > capturedAt }) ?? samples.endIndex
-    samples.insert(sample, at: insertionIndex)
+    // Buffer historical points; sort/merge once at batch commit, not once per
+    // 1 Hz record (which would make a multi-day backfill quadratic on main).
+    pendingHistoricalSamples.append(sample)
     sampleIDs.insert(sample.id)
-    let countBeforePrune = samples.count
-    prune(relativeTo: Date())
-    if samples.count != countBeforePrune {
-      sampleIDs = Set(samples.map(\\.id))
-    }
-    schedulePersist()
-    let shouldPostUpdate = markUpdateNotificationIfNeeded()
     stateLock.unlock()
-    if shouldPostUpdate {
-      NotificationCenter.default.post(name: Self.didUpdateNotification, object: self)
-    }
     return true
   }
 
@@ -1554,6 +1546,12 @@ if prune_replacement not in stores_source:
     if stores_source.count(prune_anchor) != 2:
         raise SystemExit("Expected both HR and HRV prune methods.")
     stores_source = stores_source.replace(prune_anchor, prune_replacement)
+hr_prune_union = prune_replacement.replace(
+    "sampleIDs = Set(samples.map(\\\\.id))",
+    "sampleIDs = Set(samples.map(\\\\.id)).union(pendingHistoricalSamples.map(\\\\.id))",
+)
+if hr_prune_union not in stores_source:
+    stores_source = stores_source.replace(prune_replacement, hr_prune_union, 1)
 stores.write_text(stores_source)
 
 # Edge defines 0x28 exclusively as compact live HR. K21 grouped motion
