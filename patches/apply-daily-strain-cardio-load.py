@@ -74,7 +74,8 @@ replace_once(
 '''    async let nights = sleepHistory(store, now)
     let snapshot = await HealthKitTrainingSnapshot(''',
 '''    async let nights = sleepHistory(store, now)
-    async let workouts = workoutLoadHistory(store, now)
+    let currentRestingHeartRate = await rhr
+    let workouts = await workoutLoadHistory(store, now, currentRestingHeartRate)
     let snapshot = await HealthKitTrainingSnapshot(''',
 "workout history query")
 
@@ -87,7 +88,7 @@ replace_once(
 '''  private static func sleepHistory(_ store: HKHealthStore, _ now: Date) async -> [HealthKitSleepNight]? {''',
 '''  /// Loads 14 days of workouts. Relative cardio-load points are duration ×
   /// (average HR − resting HR) / resting HR; no age-based max-HR guess is used.
-  private static func workoutLoadHistory(_ store: HKHealthStore, _ now: Date) async -> [HealthKitWorkoutLoad]? {
+  private static func workoutLoadHistory(_ store: HKHealthStore, _ now: Date, _ currentRestingHeartRate: Double?) async -> [HealthKitWorkoutLoad]? {
     let start = now.addingTimeInterval(-14 * 86400)
     let predicate = HKQuery.predicateForSamples(withStart: start, end: now, options: [])
     guard let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate) else { return nil }
@@ -96,7 +97,6 @@ replace_once(
         sampleType: HKObjectType.workoutType(), predicate: predicate, limit: HKObjectQueryNoLimit,
         sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
       ) { _, samples, _ in
-        let restingHR = HealthKitTrainingSnapshot.load()?.restingHeartRateBPM
         let workouts = (samples as? [HKWorkout] ?? []).map { workout -> HealthKitWorkoutLoad in
           let stats = workout.statistics(for: heartRateType)
           let average = stats?.averageQuantity()?.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
@@ -105,7 +105,7 @@ replace_once(
           let safePeak = peak.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
           let minutes = max(0, workout.duration / 60)
           let points: Double?
-          if let safeAverage, let restingHR, restingHR > 0 {
+          if let safeAverage, let restingHR = currentRestingHeartRate, restingHR > 0 {
             points = minutes * max(0, (safeAverage - restingHR) / restingHR)
           } else {
             points = nil
