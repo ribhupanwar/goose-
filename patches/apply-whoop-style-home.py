@@ -212,5 +212,9 @@ theme_text = theme_text.replace(
     "Color(red: 0.06, green: 0.09, blue: 0.11)",
     "Color(red: 0.025, green: 0.035, blue: 0.04)"
 )
+theme_text = theme_text.replace(
+    "red: 0.06,\n    green: 0.09,\n    blue: 0.11,",
+    "red: 0.025,\n    green: 0.035,\n    blue: 0.04,"
+)
 theme_file.write_text(theme_text)
 print("Applied dark-first WHOOP-inspired visual system across Home, Health, Coach, Device, and More.")
