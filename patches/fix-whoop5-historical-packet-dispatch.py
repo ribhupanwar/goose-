@@ -356,7 +356,7 @@ tests.write_text(tests_source)
 # only then permit history/sensor commands.
 client = one("GooseBLEClient.swift")
 client_source = client.read_text()
-hello_state_anchor = "  var clientHelloSentForCurrentConnection = false\\n"
+hello_state_anchor = "  var clientHelloSentForCurrentConnection = false\n"
 hello_state_replacement = hello_state_anchor + """  var clientHelloResponseConfirmedForCurrentConnection = false
   var clientHelloResponseTimeoutWorkItem: DispatchWorkItem?
 """
@@ -681,8 +681,8 @@ parsing_source = parsing_source.replace(
     1,
 )
 parsing_source = parsing_source.replace(
-    "    canSendHello\\n      && !isHistoricalSyncing",
-    "    canSendHello\\n      && clientHelloResponseConfirmedForCurrentConnection\\n      && !isHistoricalSyncing",
+    "    canSendHello\n      && !isHistoricalSyncing",
+    "    canSendHello\n      && clientHelloResponseConfirmedForCurrentConnection\n      && !isHistoricalSyncing",
     1,
 )
 parsing.write_text(parsing_source)
