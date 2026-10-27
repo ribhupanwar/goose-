@@ -193,7 +193,9 @@ clock_guard = """  func handleClockValue(_ value: Data, characteristic: CBCharac
 """
 clock_replacement = """  func handleClockValue(_ value: Data, characteristic: CBCharacteristic) {
     if supportsV5HistoricalSync,
-       characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a") {
+       characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a"),
+       (isHistoricalSyncing
+         || (clientHelloSentForCurrentConnection && !clientHelloResponseConfirmedForCurrentConnection)) {
       return
     }
     guard notificationCharacteristicIDs.contains(characteristic.uuid) else {
