@@ -59,7 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --manifest-path "$GOOSE_SOURCE_ROOT/Rust/core/Cargo.toml"
+          cargo test --manifest-path "$GOOSE_SOURCE_ROOT/Rust/core/Cargo.toml" --lib --test protocol_tests
 
       - name: Configure Apple Health permissions
         shell: bash
