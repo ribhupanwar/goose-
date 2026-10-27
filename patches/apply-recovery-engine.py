@@ -47,10 +47,11 @@ replace_once(
   private static func rollingBaseline(
 ''',
 "recent-sample query helper")
+calibration_source = Path(__file__).with_name("HealthKitReadinessCalibration.swift").read_text()
 replace_once(
 '''/// Latest Apple Health values used as source signals, never as fabricated scores.
 struct HealthKitTrainingSnapshot: Codable {''',
-'''/// A transparent readiness estimate; it is not a WHOOP proprietary score.
+calibration_source + "\n\n/// A transparent readiness estimate; it is not a WHOOP proprietary score.
 struct HealthKitRecoveryAssessment {
   let score: Int
   let hrvContribution: Int
@@ -93,7 +94,7 @@ replace_once(
     // OpenStrap treats HRV+RHR as one autonomic input (mean of oriented z's).
     let compositeZ = (hrvZ + rhrZ) / 2
     let calibration = HealthKitReadinessCalibration.score(compositeZ, at: capturedAt)
-    let score = Int(calibration.score.rounded()).clamped(to: 0...100)
+    let score = max(0, min(100, Int(calibration.score.rounded())))
     let status = score >= 67 ? "Ready" : (score >= 34 ? "Moderate" : "Recover")
     let confidence = hrvBase.sampleCount >= 20 && rhrBase.sampleCount >= 20 ? "Strong" : "Building"
     return HealthKitRecoveryAssessment(
@@ -125,7 +126,7 @@ recovery_ui = '''      if let assessment = store.healthKitTrainingSnapshot?.reco
           HStack(alignment: .firstTextBaseline) {
             Text("RECOVERY").font(.caption.weight(.bold)).tracking(1.1).foregroundStyle(.secondary)
             Spacer()
-            Text(assessment.status.uppercased()).font(.caption.weight(.bold).tracking(0.8))
+            Text(assessment.status.uppercased()).font(.caption.weight(.bold)).tracking(0.8)
           }
           HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text("\\(assessment.score)").font(.system(size: 42, weight: .bold, design: .rounded)).monospacedDigit()
