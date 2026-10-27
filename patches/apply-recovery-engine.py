@@ -47,7 +47,7 @@ replace_once(
   private static func rollingBaseline(
 ''',
 "recent-sample query helper")
-calibration_source = Path(__file__).with_name("HealthKitReadinessCalibration.swift").read_text()
+calibration_source = Path(__file__).with_name("HealthKitReadinessCalibration.swift").read_text().replace("import Foundation\n", "")
 replace_once(
 '''/// Latest Apple Health values used as source signals, never as fabricated scores.
 struct HealthKitTrainingSnapshot: Codable {''',
