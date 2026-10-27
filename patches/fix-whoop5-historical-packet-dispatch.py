@@ -666,7 +666,7 @@ if hello_handler not in historical_source:
     if historical_source.count(handler_anchor) != 1:
         raise SystemExit("Could not locate historical handler insertion point.")
     historical_source = historical_source.replace(handler_anchor, hello_handler + handler_anchor, 1)
-method_open = "  func handleHistoricalSyncValue(_ value: Data, characteristic: CBCharacteristic) {\\n"
+method_open = "  func handleHistoricalSyncValue(_ value: Data, characteristic: CBCharacteristic) {\n"
 if method_open not in historical_source:
     raise SystemExit("Could not locate historical sync handler declaration.")
 method_start = historical_source.index(method_open)
