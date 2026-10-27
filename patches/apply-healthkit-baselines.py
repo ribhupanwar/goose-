@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add transparent 7/30-day personal HRV and RHR baselines to the HealthKit snapshot."""
+"""Add robust personal HRV/RHR baselines (median + scaled MAD) to Goose HealthKit."""
 from pathlib import Path
 import sys
 
@@ -16,11 +16,13 @@ def replace_once(old, new, label):
 replace_once(
 '''/// Latest Apple Health values used as source signals, never as fabricated scores.
 struct HealthKitTrainingSnapshot: Codable {''',
-'''/// Mean of real Apple Health samples. Sample count is retained for transparency.
+'''/// Robust personal baseline. MAD is stored raw; robustScale applies 1.4826.
 struct HealthKitRollingBaseline: Codable {
-  let mean: Double
+  let median: Double
+  let mad: Double
   let sampleCount: Int
   let windowDays: Int
+  var robustScale: Double { mad * 1.4826 }
 }
 
 /// Latest Apple Health values used as source signals, never as fabricated scores.
@@ -41,9 +43,9 @@ replace_once(
     async let rhr = latest(store, .restingHeartRate, HKUnit.count().unitDivided(by: .minute()))''',
 '''    async let hrv = latest(store, .heartRateVariabilitySDNN, HKUnit.secondUnit(with: .milli))
     async let hrv7 = rollingBaseline(store, .heartRateVariabilitySDNN, HKUnit.secondUnit(with: .milli), now, 7, 3)
-    async let hrv30 = rollingBaseline(store, .heartRateVariabilitySDNN, HKUnit.secondUnit(with: .milli), now, 30, 5)
+    async let hrv30 = rollingBaseline(store, .heartRateVariabilitySDNN, HKUnit.secondUnit(with: .milli), now, 30, 14)
     async let rhr7 = rollingBaseline(store, .restingHeartRate, HKUnit.count().unitDivided(by: .minute()), now, 7, 3)
-    async let rhr30 = rollingBaseline(store, .restingHeartRate, HKUnit.count().unitDivided(by: .minute()), now, 30, 5)
+    async let rhr30 = rollingBaseline(store, .restingHeartRate, HKUnit.count().unitDivided(by: .minute()), now, 30, 14)
     async let rhr = latest(store, .restingHeartRate, HKUnit.count().unitDivided(by: .minute()))''',
 "baseline queries")
 replace_once(
@@ -55,56 +57,66 @@ replace_once(
       restingHeartRateBPM: rhr,''',
 "snapshot initialization")
 replace_once(
-'''  private static func latest(_ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit) async -> Double? {''',
 '''  private static func rollingBaseline(
     _ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit,
     _ now: Date, _ days: Int, _ minimumSamples: Int
-  ) async -> HealthKitRollingBaseline? {
-    guard let type = HKObjectType.quantityType(forIdentifier: id) else { return nil }
-    let start = Calendar.current.date(byAdding: .day, value: -days, to: now) ?? now.addingTimeInterval(-Double(days) * 86400)
-    let predicate = HKQuery.predicateForSamples(withStart: start, end: now, options: [])
-    return await withCheckedContinuation { continuation in
-      let query = HKSampleQuery(
-        sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
-        sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
-      ) { _, samples, _ in
-        let values = (samples as? [HKQuantitySample] ?? []).map {
-          $0.quantity.doubleValue(for: unit)
-        }.filter { $0.isFinite && $0 > 0 }
-        guard values.count >= minimumSamples else {
+  ) async -> HealthKitRollingBaseline? {''',
+'''  private static func median(_ input: [Double]) -> Double? {
+    guard !input.isEmpty else { return nil }
+    let values = input.sorted()
+    let middle = values.count / 2
+    if values.count.isMultiple(of: 2) {
+      return (values[middle - 1] + values[middle]) / 2
+    }
+    return values[middle]
+  }
+
+  private static func rollingBaseline(
+    _ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit,
+    _ now: Date, _ days: Int, _ minimumSamples: Int
+  ) async -> HealthKitRollingBaseline? {''',
+"baseline median helper")
+replace_once(
+'''        let mean = values.reduce(0, +) / Double(values.count)
+        continuation.resume(returning: HealthKitRollingBaseline(mean: mean, sampleCount: values.count, windowDays: days))''',
+'''        guard let center = median(values),
+              let rawMAD = median(values.map { abs($0 - center) }) else {
           continuation.resume(returning: nil)
           return
         }
-        let mean = values.reduce(0, +) / Double(values.count)
-        continuation.resume(returning: HealthKitRollingBaseline(mean: mean, sampleCount: values.count, windowDays: days))
-      }
-      store.execute(query)
-    }
-  }
-
-  private static func latest(_ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit) async -> Double? {''',
-"baseline query helper")
+        continuation.resume(returning: HealthKitRollingBaseline(
+          median: center, mad: rawMAD, sampleCount: values.count, windowDays: days
+        ))''',
+"median/MAD baseline calculation")
 p.write_text(s)
 
 p = root / "HealthView.swift"
 v = p.read_text()
 old = '''        metric("HRV (SDNN)", number(store.healthKitTrainingSnapshot?.hrvSDNNMilliseconds, " ms", 0), "waveform.path.ecg")
-        metric("Resting HR", number(store.healthKitTrainingSnapshot?.restingHeartRateBPM, " bpm", 0), "heart")'''
-new = '''        metric("HRV (SDNN)", number(store.healthKitTrainingSnapshot?.hrvSDNNMilliseconds, " ms", 0), "waveform.path.ecg")
         metric("HRV 7-day avg", baseline(store.healthKitTrainingSnapshot?.hrv7DayBaseline, " ms"), "chart.line.uptrend.xyaxis")
         metric("HRV 30-day avg", baseline(store.healthKitTrainingSnapshot?.hrv30DayBaseline, " ms"), "chart.xyaxis.line")
         metric("Resting HR", number(store.healthKitTrainingSnapshot?.restingHeartRateBPM, " bpm", 0), "heart")
         metric("RHR 7-day avg", baseline(store.healthKitTrainingSnapshot?.restingHR7DayBaseline, " bpm"), "chart.line.downtrend.xyaxis")
         metric("RHR 30-day avg", baseline(store.healthKitTrainingSnapshot?.restingHR30DayBaseline, " bpm"), "chart.xyaxis.line")'''
-if old not in v: raise SystemExit("HealthView baseline insertion anchor missing")
+new = '''        metric("HRV (SDNN)", number(store.healthKitTrainingSnapshot?.hrvSDNNMilliseconds, " ms", 0), "waveform.path.ecg")
+        metric("HRV 7-day median", baseline(store.healthKitTrainingSnapshot?.hrv7DayBaseline, " ms"), "chart.line.uptrend.xyaxis")
+        metric("HRV 30-day median", baseline(store.healthKitTrainingSnapshot?.hrv30DayBaseline, " ms"), "chart.xyaxis.line")
+        metric("Resting HR", number(store.healthKitTrainingSnapshot?.restingHeartRateBPM, " bpm", 0), "heart")
+        metric("RHR 7-day median", baseline(store.healthKitTrainingSnapshot?.restingHR7DayBaseline, " bpm"), "chart.line.downtrend.xyaxis")
+        metric("RHR 30-day median", baseline(store.healthKitTrainingSnapshot?.restingHR30DayBaseline, " bpm"), "chart.xyaxis.line")'''
+if old not in v: raise SystemExit("HealthView baseline display anchor missing")
 v = v.replace(old, new, 1)
-anchor = '''  private func count(_ value: Double?) -> String {'''
-helper = '''  private func baseline(_ value: HealthKitRollingBaseline?, _ suffix: String) -> String {
+old_helper = '''  private func baseline(_ value: HealthKitRollingBaseline?, _ suffix: String) -> String {
     guard let value else { return "Building baseline" }
     return value.mean.formatted(.number.precision(.fractionLength(0))) + suffix + " · n=" + String(value.sampleCount)
-  }
-  private func count(_ value: Double?) -> String {'''
-if anchor not in v: raise SystemExit("HealthView baseline helper anchor missing")
-v = v.replace(anchor, helper, 1)
+  }'''
+new_helper = '''  private func baseline(_ value: HealthKitRollingBaseline?, _ suffix: String) -> String {
+    guard let value else { return "Building baseline" }
+    let center = value.median.formatted(.number.precision(.fractionLength(0)))
+    let spread = value.robustScale.formatted(.number.precision(.fractionLength(1)))
+    return center + suffix + " · MAD σ≈" + spread + " · n=" + String(value.sampleCount)
+  }'''
+if old_helper not in v: raise SystemExit("HealthView baseline formatter anchor missing")
+v = v.replace(old_helper, new_helper, 1)
 p.write_text(v)
-print("Added 7/30-day HRV and resting-HR baselines with sample-count transparency.")
+print("Added median + MAD personal baselines with minimum sample gates and transparent display.")
