@@ -1601,4 +1601,153 @@ if bridge_test not in bridge_source:
     bridge_source = bridge_source.replace(bridge_test_anchor, bridge_test + bridge_test_anchor, 1)
 bridge.write_text(bridge_source)
 
+# Use Edge's confirmed Gen5 v18 skin-temperature field (inner[65], signed
+# i16 / 100, -5000 sentinel). The older generic K18 candidate offset belongs
+# to another layout. Do not publish the unpinned K18 byte as Gen5 respiration.
+candidates = one("HistoryCandidateSamples.swift")
+candidate_source = candidates.read_text()
+candidate_source = candidate_source.replace(
+    "static func from(packetK: Int, body: Data?)",
+    "static func from(packetK: Int, body: Data?, deviceType: String)",
+)
+gen5_temp_case = """    case 18 where deviceType == "GOOSE":
+      return candidate(
+        packetK: packetK,
+        body: body,
+        schemaField: "normal_history_k18_gen5_inner65_skin_temperature_c",
+        rawBodyOffset: 52,
+        encoding: "i16_le_x100",
+        scale: 100.0,
+        signed: true,
+        unavailableSentinel: -5000,
+        confirmedGen5: true
+      )
+"""
+temp_case_anchor = """    case 18:
+      return candidate(
+        packetK: packetK,
+        body: body,
+        schemaField: "normal_history_k18_body_24_skin_temperature_c",
+"""
+if gen5_temp_case not in candidate_source:
+    if candidate_source.count(temp_case_anchor) != 1:
+        raise SystemExit("Could not locate K18 temperature candidate switch.")
+    candidate_source = candidate_source.replace(temp_case_anchor, gen5_temp_case + temp_case_anchor, 1)
+
+candidate_signature_anchor = """    scale: Double,
+    signed: Bool
+  ) -> HistoryTemperatureCandidate {
+"""
+candidate_signature_replacement = """    scale: Double,
+    signed: Bool,
+    unavailableSentinel: Int? = nil,
+    confirmedGen5: Bool = false
+  ) -> HistoryTemperatureCandidate {
+"""
+if candidate_signature_replacement not in candidate_source:
+    if candidate_source.count(candidate_signature_anchor) != 1:
+        raise SystemExit("Could not locate temperature candidate decoder signature.")
+    candidate_source = candidate_source.replace(candidate_signature_anchor, candidate_signature_replacement, 1)
+
+temp_value_anchor = """    let temp = signed ? Double(rawI16) / scale : Double(rawU16) / scale
+    let rawHex = Data(body[rawBodyOffset..<(rawBodyOffset + 2)]).hexString
+    return HistoryTemperatureCandidate(
+"""
+temp_value_replacement = """    let temp = signed ? Double(rawI16) / scale : Double(rawU16) / scale
+    let unavailable = unavailableSentinel == rawI16
+    let status: String
+    if unavailable {
+      status = "gen5_skin_temperature_unavailable_sentinel"
+    } else if confirmedGen5 {
+      status = (15.0...45.0).contains(temp) ? "gen5_skin_temperature_decoded" : "outside_gen5_skin_temperature_range"
+    } else {
+      status = semanticStatus(for: temp)
+    }
+    let rawHex = Data(body[rawBodyOffset..<(rawBodyOffset + 2)]).hexString
+    return HistoryTemperatureCandidate(
+"""
+if temp_value_replacement not in candidate_source:
+    if candidate_source.count(temp_value_anchor) != 1:
+        raise SystemExit("Could not locate temperature candidate value decoding.")
+    candidate_source = candidate_source.replace(temp_value_anchor, temp_value_replacement, 1)
+candidate_source = candidate_source.replace("      temperatureC: temp,\n      semanticStatus: semanticStatus(for: temp)", "      temperatureC: unavailable ? nil : temp,\n      semanticStatus: status", 1)
+
+resp_guard_anchor = """    guard packetK == 18 else {
+      return nil
+    }
+
+    let schemaField = "normal_history_k18_body_26_respiratory_rate_rpm_candidate"
+"""
+resp_guard_replacement = """    guard packetK == 18, deviceType != "GOOSE" else {
+      return nil
+    }
+
+    let schemaField = "normal_history_k18_body_26_respiratory_rate_rpm_candidate"
+"""
+if resp_guard_replacement not in candidate_source:
+    if candidate_source.count(resp_guard_anchor) != 1:
+        raise SystemExit("Could not locate K18 respiratory candidate guard.")
+    candidate_source = candidate_source.replace(resp_guard_anchor, resp_guard_replacement, 1)
+candidates.write_text(candidate_source)
+
+events = one("WhoopEventSamples.swift")
+events_source = events.read_text()
+events_source = events_source.replace(
+    "static func fromParsedFrame(_ parsed: [String: Any], capturedAt: Date)",
+    "static func fromParsedFrame(_ parsed: [String: Any], capturedAt: Date, deviceType: String)",
+    1,
+)
+events_source = events_source.replace(
+    "static func fromCompactSummary(_ compact: NotificationFrameCompactSummary, capturedAt: Date)",
+    "static func fromCompactSummary(_ compact: NotificationFrameCompactSummary, capturedAt: Date, deviceType: String)",
+    1,
+)
+events_source = events_source.replace(
+    "HistoryTemperatureCandidate.from(packetK: packetK, body: bodyData)",
+    "HistoryTemperatureCandidate.from(packetK: packetK, body: bodyData, deviceType: deviceType)",
+)
+events_source = events_source.replace(
+    "HistoryRespiratoryRateCandidate.from(packetK: packetK, body: bodyData)",
+    "HistoryRespiratoryRateCandidate.from(packetK: packetK, body: bodyData, deviceType: deviceType)",
+)
+events.write_text(events_source)
+
+publisher = one("GooseAppModel+PacketPublishing.swift")
+publisher_source = publisher.read_text()
+publisher_source = publisher_source.replace(
+    "static func extractWhoopDataSignal(from parsed: [String: Any], capturedAt: Date)",
+    "static func extractWhoopDataSignal(from parsed: [String: Any], capturedAt: Date, deviceType: String)",
+    1,
+)
+publisher_source = publisher_source.replace(
+    "WhoopDataSignalSample.fromParsedFrame(parsed, capturedAt: capturedAt)",
+    "WhoopDataSignalSample.fromParsedFrame(parsed, capturedAt: capturedAt, deviceType: deviceType)",
+    1,
+)
+publisher_source = publisher_source.replace(
+    "static func extractWhoopDataSignal(from compact: NotificationFrameCompactSummary?, capturedAt: Date)",
+    "static func extractWhoopDataSignal(from compact: NotificationFrameCompactSummary?, capturedAt: Date, deviceType: String)",
+    1,
+)
+publisher_source = publisher_source.replace(
+    "WhoopDataSignalSample.fromCompactSummary($0, capturedAt: capturedAt)",
+    "WhoopDataSignalSample.fromCompactSummary($0, capturedAt: capturedAt, deviceType: deviceType)",
+    1,
+)
+publisher.write_text(publisher_source)
+
+pipeline = one("GooseAppModel+NotificationPipeline.swift")
+pipeline_source = pipeline.read_text()
+pipeline_source = pipeline_source.replace(
+    "extractWhoopDataSignal(from: compact, capturedAt: event.capturedAt)",
+    "extractWhoopDataSignal(from: compact, capturedAt: event.capturedAt, deviceType: event.rustDeviceType)",
+    1,
+)
+pipeline_source = pipeline_source.replace(
+    "extractWhoopDataSignal(from: $0, capturedAt: event.capturedAt)",
+    "extractWhoopDataSignal(from: $0, capturedAt: event.capturedAt, deviceType: event.rustDeviceType)",
+    1,
+)
+pipeline.write_text(pipeline_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
