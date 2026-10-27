@@ -685,6 +685,7 @@ if "let historicalChannels: Set<CBUUID>" not in method_tail:
     method_start = historical_source.index(method_open)
     method_tail = historical_source[method_start:]
 if channel_expression not in method_tail:
+    print("DEBUG historical handler tail:", repr(method_tail[:2200]))
     raise SystemExit("Could not locate Gen5 command characteristic expression after handleHistoricalSyncValue.")
 method_tail = method_tail.replace(channel_expression, "historicalChannels.contains(characteristic.uuid)", 1)
 historical_source = historical_source[:method_start] + method_tail
