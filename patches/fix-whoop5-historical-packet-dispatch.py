@@ -666,6 +666,26 @@ if hello_handler not in historical_source:
     if historical_source.count(handler_anchor) != 1:
         raise SystemExit("Could not locate historical handler insertion point.")
     historical_source = historical_source.replace(handler_anchor, hello_handler + handler_anchor, 1)
+old_channel_guard = """    guard characteristic.uuid == CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a") else {
+      return
+    }
+"""
+new_channel_guard = """    // Gen5 historical traffic is split across command, event, and data
+    // characteristics. The command-only guard silently discarded packet 47
+    // on fd4b0005 — the exact symptom was metadata-only history sync.
+    let historicalChannels: Set<CBUUID> = [
+      CBUUID(string: "fd4b0003-cce1-4033-93ce-002d5875f58a"),
+      CBUUID(string: "fd4b0004-cce1-4033-93ce-002d5875f58a"),
+      CBUUID(string: "fd4b0005-cce1-4033-93ce-002d5875f58a")
+    ]
+    guard historicalChannels.contains(characteristic.uuid) else {
+      return
+    }
+"""
+if new_channel_guard not in historical_source:
+    if historical_source.count(old_channel_guard) != 1:
+        raise SystemExit("Could not uniquely locate command-only historical characteristic guard.")
+    historical_source = historical_source.replace(old_channel_guard, new_channel_guard, 1)
 historical.write_text(historical_source)
 
 # Manual sync is also blocked until the same verified hello response is received.
