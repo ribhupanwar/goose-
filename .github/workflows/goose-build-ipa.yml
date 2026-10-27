@@ -53,6 +53,12 @@ jobs:
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/patches/fix-whoop5-historical-packet-dispatch.py" "$GOOSE_SOURCE_ROOT"
 
+      - name: Align WHOOP 5 GATT timing with Edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/patches/align-whoop5-gatt-timing.py" "$GOOSE_SOURCE_ROOT"
+
       - name: Enable durable WHOOP 5 history ACK
         shell: bash
         run: |
