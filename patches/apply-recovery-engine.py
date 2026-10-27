@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add a transparent HRV/RHR-based recovery assessment to Goose."""
+"""Add OpenStrap-inspired, independently implemented robust readiness to Goose."""
 from pathlib import Path
 import sys
 
@@ -24,7 +24,7 @@ replace_once(
 replace_once(
 '''  private static func rollingBaseline(
 ''',
-'''  /// Recovery uses fresh readings only; old Health samples must not masquerade as today's state.
+'''  /// Only samples from the last 36 hours can represent current readiness.
   private static func latestRecent(
     _ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit,
     _ now: Date, _ maxAgeHours: Double
@@ -50,13 +50,16 @@ replace_once(
 replace_once(
 '''/// Latest Apple Health values used as source signals, never as fabricated scores.
 struct HealthKitTrainingSnapshot: Codable {''',
-'''/// Transparent recovery estimate derived from fresh HRV/RHR and personal 30-day means.
+'''/// A transparent readiness estimate; it is not a WHOOP proprietary score.
 struct HealthKitRecoveryAssessment {
   let score: Int
   let hrvContribution: Int
   let restingHRContribution: Int
   let status: String
   let confidence: String
+  let calibrationStatus: String
+  let calibrationNights: Int
+  let compositeZ: Double
 }
 
 /// Latest Apple Health values used as source signals, never as fabricated scores.
@@ -68,51 +71,75 @@ replace_once(
   static let didUpdate''',
 '''  let source: String
 
-  /// Requires both 30-day baselines and readings from the last 36 hours.
-  /// HRV contributes 60%; resting HR contributes 40%. Components are bounded 0–100.
+  /// Robust-z readiness. HRV and RHR form one autonomic group, so both are
+  /// required here; a missing signal never gets zero-imputed or promoted alone.
   var recoveryAssessment: HealthKitRecoveryAssessment? {
     guard let hrv = hrvSDNNMilliseconds, hrv > 0,
           let rhr = restingHeartRateBPM, rhr > 0,
-          let hrvBase = hrv30DayBaseline, hrvBase.mean > 0,
-          let rhrBase = restingHR30DayBaseline, rhrBase.mean > 0 else { return nil }
-    let hrvScore = min(100, max(0, 50 + ((hrv - hrvBase.mean) / hrvBase.mean) * 200))
-    let rhrScore = min(100, max(0, 50 + ((rhrBase.mean - rhr) / rhrBase.mean) * 300))
-    let total = Int((hrvScore * 0.6 + rhrScore * 0.4).rounded())
-    let status = total >= 67 ? "Ready" : (total >= 34 ? "Moderate" : "Recover")
-    let samples = min(hrvBase.sampleCount, rhrBase.sampleCount)
-    let confidence = samples >= 20 ? "Strong" : (samples >= 10 ? "Good" : "Building")
+          let hrvBase = hrv30DayBaseline,
+          let rhrBase = restingHR30DayBaseline,
+          hrvBase.sampleCount >= 14, rhrBase.sampleCount >= 14 else { return nil }
+
+    let hrvScale = hrvBase.robustScale
+    let rhrScale = rhrBase.robustScale
+    // A zero MAD means there is no defensible personal dispersion estimate.
+    // Do not fall back to a tiny SD or manufacture a large readiness score.
+    guard hrvScale.isFinite, rhrScale.isFinite, hrvScale > 0, rhrScale > 0 else { return nil }
+
+    let hrvZ = (hrv - hrvBase.median) / hrvScale
+    let rhrZ = (rhrBase.median - rhr) / rhrScale
+    guard hrvZ.isFinite, rhrZ.isFinite else { return nil }
+
+    // OpenStrap treats HRV+RHR as one autonomic input (mean of oriented z's).
+    let compositeZ = (hrvZ + rhrZ) / 2
+    let calibration = HealthKitReadinessCalibration.score(compositeZ, at: capturedAt)
+    let score = Int(calibration.score.rounded()).clamped(to: 0...100)
+    let status = score >= 67 ? "Ready" : (score >= 34 ? "Moderate" : "Recover")
+    let confidence = hrvBase.sampleCount >= 20 && rhrBase.sampleCount >= 20 ? "Strong" : "Building"
     return HealthKitRecoveryAssessment(
-      score: total, hrvContribution: Int(hrvScore.rounded()),
-      restingHRContribution: Int(rhrScore.rounded()), status: status,
-      confidence: confidence
+      score: score,
+      hrvContribution: Int((50 + 25 * hrvZ).clamped(to: 0...100).rounded()),
+      restingHRContribution: Int((50 + 25 * rhrZ).clamped(to: 0...100).rounded()),
+      status: status,
+      confidence: confidence,
+      calibrationStatus: calibration.status,
+      calibrationNights: calibration.nights,
+      compositeZ: compositeZ
     )
   }
 
   static let didUpdate''',
-"recovery calculation")
+"robust readiness calculation")
 p.write_text(s)
 
 p = root / "HealthView.swift"
 v = p.read_text()
-anchor = '''      LazyVGrid(columns: columns, spacing: 10) {'''
-recovery = '''      if let assessment = store.healthKitTrainingSnapshot?.recoveryAssessment {
+start = '''      if let assessment = store.healthKitTrainingSnapshot?.recoveryAssessment {'''
+end = '''      LazyVGrid(columns: columns, spacing: 10) {'''
+if start not in v or end not in v:
+    raise SystemExit("Recovery UI block anchors missing")
+a = v.index(start)
+b = v.index(end, a)
+recovery_ui = '''      if let assessment = store.healthKitTrainingSnapshot?.recoveryAssessment {
         VStack(alignment: .leading, spacing: 8) {
           HStack(alignment: .firstTextBaseline) {
             Text("RECOVERY").font(.caption.weight(.bold)).tracking(1.1).foregroundStyle(.secondary)
             Spacer()
-            Text(assessment.status.uppercased()).font(.caption.weight(.bold)).tracking(0.8)
+            Text(assessment.status.uppercased()).font(.caption.weight(.bold).tracking(0.8))
           }
           HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("\(assessment.score)").font(.system(size: 42, weight: .bold, design: .rounded)).monospacedDigit()
+            Text("\\(assessment.score)").font(.system(size: 42, weight: .bold, design: .rounded)).monospacedDigit()
             Text("/ 100").font(.subheadline).foregroundStyle(.secondary)
             Spacer()
-            Text(assessment.confidence + " confidence").font(.caption).foregroundStyle(.secondary)
+            Text(assessment.confidence).font(.caption).foregroundStyle(.secondary)
           }
           HStack(spacing: 12) {
-            Label("HRV \(assessment.hrvContribution)", systemImage: "waveform.path.ecg")
-            Label("RHR \(assessment.restingHRContribution)", systemImage: "heart")
+            Label("HRV z \\(assessment.hrvContribution)", systemImage: "waveform.path.ecg")
+            Label("RHR z \\(assessment.restingHRContribution)", systemImage: "heart")
           }.font(.caption).foregroundStyle(.secondary)
-          Text("HRV weight 60% · RHR weight 40% · compared with your 30-day averages")
+          Text("Median + MAD personal baseline · HRV/RHR autonomic composite")
+            .font(.caption2).foregroundStyle(.secondary)
+          Text(assessment.calibrationStatus + " · " + String(assessment.calibrationNights) + "/14 prior days")
             .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(12)
@@ -120,16 +147,15 @@ recovery = '''      if let assessment = store.healthKitTrainingSnapshot?.recover
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
       } else {
         VStack(alignment: .leading, spacing: 4) {
-          Text("Recovery score is building").font(.subheadline.weight(.semibold))
-          Text("Needs fresh HRV and resting-HR readings from the last 36 hours plus personal 30-day baselines. Sync Apple Health after wearing your watch.")
+          Text("Recovery score is unavailable").font(.subheadline.weight(.semibold))
+          Text("Needs fresh HRV and resting-HR readings from the last 36 hours, at least 14 personal baseline samples for each, and non-zero MAD dispersion. Missing or unreliable data is not estimated.")
             .font(.caption).foregroundStyle(.secondary)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
       }
-      LazyVGrid(columns: columns, spacing: 10) {'''
-if anchor not in v: raise SystemExit("Recovery UI insertion anchor missing")
-v = v.replace(anchor, recovery, 1)
+'''
+v = v.slice(0, a) + recovery_ui + v.slice(b)
 p.write_text(v)
-print("Added fresh-sample HRV/RHR recovery assessment and Health UI.")
+print("Added fresh-sample robust-z readiness, missing-data abstention, and calibrated score history.")
