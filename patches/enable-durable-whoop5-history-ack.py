@@ -187,7 +187,7 @@ archive = """final class GooseHistoricalSyncBatchArchive {
           appropriateFor: nil,
           create: true
         )
-        let directory = base.appendingPathComponent("Goose/HistoricalSync", isDirectory: true)
+        let directory = base.appendingPathComponent("Goose", isDirectory: true).appendingPathComponent("HistoricalSync", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let token = ackPayload.dropFirst().map { String(format: "%02x", $0) }.joined()
         let name = "batch-\\(token)-\\(UUID().uuidString).json"
