@@ -122,9 +122,13 @@ gate = """    if historicalDataResultAckEnabled && !historicalBatchCommitComplet
         historyEndAckQueued = true
         return true
       }
-      guard !pendingHistoricalBatchFrames.isEmpty else {
+      guard historicalPacketsReceivedThisSync > 0,
+            !pendingHistoricalBatchFrames.isEmpty else {
         historyEndAckQueued = false
-        failHistoricalSync("HISTORY_END arrived without any complete burst frames; refusing to ACK an empty batch.")
+        if retryHistoricalTransferAfterIdleIfNeeded(reason: "history_end_without_data_\\(reason)") {
+          return true
+        }
+        failHistoricalSync("HISTORY_END arrived without historical data bodies; refusing to ACK an empty batch.")
         return true
       }
       guard let onHistoricalBatchCommit else {
