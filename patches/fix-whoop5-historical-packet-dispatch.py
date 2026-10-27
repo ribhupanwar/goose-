@@ -697,4 +697,129 @@ if debug_new not in debug_source:
     debug_source = debug_source.replace(debug_guard, debug_new)
 debug_file.write_text(debug_source)
 
+
+# The app's PRIMARY notification ingest path has its own reassembler. Harden
+# that path too (not only the historical counter path): validate the header
+# before trusting the length, and resync after a bad payload CRC while still
+# returning the corrupt frame for Rust diagnostics.
+pipeline = one("GooseAppModel+NotificationPipeline.swift")
+pipeline_source = pipeline.read_text()
+function_anchor = "  func gooseFrames(in data: Data, event: GooseNotificationEvent) -> FrameReassemblyResult {"
+next_anchor = "  func frameReassemblyKey(for event: GooseNotificationEvent) -> String {"
+start = pipeline_source.find(function_anchor)
+end = pipeline_source.find(next_anchor, start + len(function_anchor))
+if start < 0 or end < 0:
+    raise SystemExit("Could not uniquely locate the app notification reassembler.")
+replacement = """  static func notificationHeaderCRCValid(_ bytes: [UInt8], deviceType: String) -> Bool {
+    if deviceType == "GEN4" {
+      guard bytes.count >= 4 else { return false }
+      var crc: UInt8 = 0
+      for byte in bytes[1..<3] {
+        crc ^= byte
+        for _ in 0..<8 {
+          let shifted = UInt16(crc) << 1
+          crc = UInt8(((crc & 0x80) != 0 ? shifted ^ 0x07 : shifted) & 0xff)
+        }
+      }
+      return crc == bytes[3]
+    }
+    guard bytes.count >= 8 else { return false }
+    let stored = UInt16(bytes[6]) | (UInt16(bytes[7]) << 8)
+    return GooseBLEClient.crc16Modbus(Array(bytes[0..<6])) == stored
+  }
+
+  static func notificationPayloadCRCValid(_ frame: [UInt8], headerLength: Int) -> Bool {
+    guard frame.count >= headerLength + 4 else { return false }
+    let payloadEnd = frame.count - 4
+    let stored = UInt32(frame[payloadEnd])
+      | (UInt32(frame[payloadEnd + 1]) << 8)
+      | (UInt32(frame[payloadEnd + 2]) << 16)
+      | (UInt32(frame[payloadEnd + 3]) << 24)
+    return GooseBLEClient.crc32(Array(frame[headerLength..<payloadEnd])) == stored
+  }
+
+  func gooseFrames(in data: Data, event: GooseNotificationEvent) -> FrameReassemblyResult {
+    let key = frameReassemblyKey(for: event)
+    let hadBufferedData = frameReassemblyBuffers[key]?.isEmpty == false
+    var bytes = Array(frameReassemblyBuffers[key] ?? Data())
+    bytes.append(contentsOf: data)
+    var frames: [Data] = []
+    var droppedBytes = 0
+    var expectedBytes: Int?
+    let headerLength = event.rustDeviceType == "GEN4" ? 4 : 8
+
+    func resync() -> Bool {
+      if let next = bytes.dropFirst().firstIndex(of: 0xaa) {
+        droppedBytes += next
+        bytes.removeFirst(next)
+        return true
+      }
+      droppedBytes += bytes.count
+      bytes.removeAll(keepingCapacity: true)
+      return false
+    }
+
+    while bytes.count >= headerLength + 4 {
+      guard bytes.first == 0xaa else {
+        if !resync() { break }
+        continue
+      }
+      guard Self.notificationHeaderCRCValid(bytes, deviceType: event.rustDeviceType) else {
+        if !resync() { break }
+        continue
+      }
+
+      let declaredLength: Int
+      if event.rustDeviceType == "GEN4" {
+        declaredLength = Int(bytes[1]) | (Int(bytes[2]) << 8)
+      } else {
+        declaredLength = Int(bytes[2]) | (Int(bytes[3]) << 8)
+      }
+      let frameLength = headerLength + declaredLength
+      guard declaredLength >= 4, frameLength <= 4096 else {
+        if !resync() { break }
+        continue
+      }
+      guard bytes.count >= frameLength else {
+        expectedBytes = frameLength
+        break
+      }
+
+      let frame = Array(bytes[0..<frameLength])
+      // Keep bad-CRC frames visible to the Rust parser/diagnostics, but do not
+      // trust their declared length to consume the next valid frame.
+      frames.append(Data(frame))
+      guard Self.notificationPayloadCRCValid(frame, headerLength: headerLength) else {
+        if !resync() { break }
+        continue
+      }
+
+      bytes.removeFirst(frameLength)
+      while bytes.first == 0x00 {
+        bytes.removeFirst()
+      }
+    }
+
+    if bytes.isEmpty {
+      frameReassemblyBuffers.removeValue(forKey: key)
+    } else if bytes.first == 0xaa && bytes.count <= Self.maximumBufferedFrameBytes {
+      frameReassemblyBuffers[key] = Data(bytes)
+    } else {
+      droppedBytes += bytes.count
+      frameReassemblyBuffers.removeValue(forKey: key)
+    }
+
+    return FrameReassemblyResult(
+      frames: frames,
+      bufferedBytes: frameReassemblyBuffers[key]?.count ?? 0,
+      expectedBytes: expectedBytes,
+      droppedBytes: droppedBytes,
+      usedBufferedData: hadBufferedData
+    )
+  }
+
+"""
+pipeline_source = pipeline_source[:start] + replacement + pipeline_source[end:]
+pipeline.write_text(pipeline_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
