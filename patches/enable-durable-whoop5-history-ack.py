@@ -125,6 +125,8 @@ reset_anchor = """    pendingHistoryEndAckPayload = nil
 """
 reset_replacement = """    pendingHistoryEndAckPayload = nil
     pendingHistoricalBatchFrames.removeAll(keepingCapacity: true)
+    historicalExpectedPacketCount = nil
+    historicalBurstPacketCount = 0
     historicalBatchCommitComplete = false
     historicalBatchCommitInProgress = false
     historyEndReceived = false
