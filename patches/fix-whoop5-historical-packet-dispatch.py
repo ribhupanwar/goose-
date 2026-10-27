@@ -666,10 +666,17 @@ if hello_handler not in historical_source:
     if historical_source.count(handler_anchor) != 1:
         raise SystemExit("Could not locate historical handler insertion point.")
     historical_source = historical_source.replace(handler_anchor, hello_handler + handler_anchor, 1)
-method_open = "  func handleHistoricalSyncValue(_ value: Data, characteristic: CBCharacteristic) {\n"
-if method_open not in historical_source:
-    raise SystemExit("Could not locate historical sync handler declaration.")
-method_start = historical_source.index(method_open)
+# Source revisions differ in access modifier/indentation; anchor on the
+# function name and opening brace rather than a brittle full declaration.
+import re
+method_match = re.search(
+    r"(?m)^\s*(?:(?:private|fileprivate)\s+)?func\s+handleHistoricalSyncValue\([^\n]*\)\s*\{",
+    historical_source,
+)
+if method_match is None:
+    candidates = [line for line in historical_source.splitlines() if "handleHistoricalSyncValue" in line]
+    raise SystemExit("Could not locate historical sync handler declaration; candidates=" + repr(candidates))
+method_start = method_match.start()
 method_tail = historical_source[method_start:]
 # Channel filtering belongs in the notification dispatcher, not this handler.
 # Once routed here, command/event/data frames all need parsing.
