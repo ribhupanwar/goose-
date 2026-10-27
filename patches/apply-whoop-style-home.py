@@ -1,6 +1,7 @@
+import sys
 from pathlib import Path
 
-root = Path(__file__).resolve().parents[1]
+root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
 home_matches = list(root.rglob("HomeDashboardView.swift"))
 score_matches = list(root.rglob("HomeScoreViews.swift"))
 if len(home_matches) != 1 or len(score_matches) != 1:
