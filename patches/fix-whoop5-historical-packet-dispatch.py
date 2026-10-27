@@ -666,8 +666,23 @@ commands.write_text(commands_source)
 parsing = one("GooseBLEClient.swift")
 parsing_source = parsing.read_text()
 parsing_source = parsing_source.replace(
-    "    activePeripheral != nil && commandCharacteristic != nil && connectionState == \"ready\"",
-    "    activePeripheral != nil && commandCharacteristic != nil && connectionState == \"ready\"",
+    "    canSendHello && !isHistoricalSyncing && supportsV5HistoricalSync",
+    "    canSendHello && clientHelloResponseConfirmedForCurrentConnection && !isHistoricalSyncing && supportsV5HistoricalSync",
+    1,
+)
+parsing_source = parsing_source.replace(
+    "    canSendHello && !isHistoricalSyncing && supportsV5SensorCommands",
+    "    canSendHello && clientHelloResponseConfirmedForCurrentConnection && !isHistoricalSyncing && supportsV5SensorCommands",
+    1,
+)
+parsing_source = parsing_source.replace(
+    "    canSendHello && !isHistoricalSyncing && supportsV5AlarmCommands",
+    "    canSendHello && clientHelloResponseConfirmedForCurrentConnection && !isHistoricalSyncing && supportsV5AlarmCommands",
+    1,
+)
+parsing_source = parsing_source.replace(
+    "    canSendHello\\n      && !isHistoricalSyncing",
+    "    canSendHello\\n      && clientHelloResponseConfirmedForCurrentConnection\\n      && !isHistoricalSyncing",
     1,
 )
 parsing.write_text(parsing_source)
@@ -677,9 +692,9 @@ debug_source = debug_file.read_text()
 debug_guard = "    guard autoSendDebugSkinTemperatureCommand, !debugSkinTemperatureCommandSent else {\n"
 debug_new = "    guard clientHelloResponseConfirmedForCurrentConnection, autoSendDebugSkinTemperatureCommand, !debugSkinTemperatureCommandSent else {\n"
 if debug_new not in debug_source:
-    if debug_source.count(debug_guard) != 1:
+    if debug_source.count(debug_guard) < 1:
         raise SystemExit("Could not locate debug command scheduling guard.")
-    debug_source = debug_source.replace(debug_guard, debug_new, 1)
+    debug_source = debug_source.replace(debug_guard, debug_new)
 debug_file.write_text(debug_source)
 
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
