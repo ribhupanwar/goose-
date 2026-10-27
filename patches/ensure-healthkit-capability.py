@@ -24,7 +24,7 @@ if setting not in text:
     marker = "buildSettings = {"
     if marker not in text:
         raise SystemExit("No Xcode build settings blocks found")
-    text = text.replace(marker, marker + "\\n\\t\\t\\t\\t" + setting)
+    text = text.replace(marker, marker + "\n\t\t\t\t" + setting)
 project.write_text(text)
 
 info = root / "GooseSwift" / "Info.plist"
