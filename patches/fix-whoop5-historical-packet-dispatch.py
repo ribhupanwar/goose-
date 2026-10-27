@@ -1357,4 +1357,222 @@ if rmssd_helper not in pipeline_source:
     pipeline_source = pipeline_source.replace(anchor, rmssd_helper + anchor, 1)
 pipeline.write_text(pipeline_source)
 
+# The compact bridge needs the protocol packet constant for the Gen5 v18
+# historical branch.
+bridge = one("bridge.rs")
+bridge_source = bridge.read_text()
+import_anchor = """        DataPacketBodySummary, DeviceType, I16SeriesSummary, ParsedFrame, ParsedPayload,
+        parse_frame_hex,
+"""
+import_replacement = """        DataPacketBodySummary, DeviceType, I16SeriesSummary, ParsedFrame, ParsedPayload,
+        PACKET_TYPE_HISTORICAL_DATA, parse_frame_hex,
+"""
+if import_replacement not in bridge_source:
+    if bridge_source.count(import_anchor) != 1:
+        raise SystemExit("Could not locate bridge protocol imports.")
+    bridge_source = bridge_source.replace(import_anchor, import_replacement, 1)
+bridge.write_text(bridge_source)
+
+# Historical backfill arrives out of chronological order relative to live
+# samples. Keep the persisted HR/HRV series sorted and deduplicated by stable
+# sample ID so an unacknowledged re-offer cannot duplicate a whole history day.
+stores = one("HeartRateSeriesStores.swift")
+stores_source = stores.read_text()
+stores_source = stores_source.replace(
+    "  private static let retention: TimeInterval = 7 * 24 * 60 * 60",
+    "  private static let retention: TimeInterval = 14 * 24 * 60 * 60",
+    1,
+)
+hr_samples_anchor = """  private var samples: [HeartRateSamplePoint]
+  private var pendingWrite: DispatchWorkItem?
+"""
+hr_samples_replacement = """  private var samples: [HeartRateSamplePoint]
+  private var sampleIDs: Set<String> = []
+  private var pendingWrite: DispatchWorkItem?
+"""
+if hr_samples_replacement not in stores_source:
+    if stores_source.count(hr_samples_anchor) != 1:
+        raise SystemExit("Could not locate heart-rate store sample state.")
+    stores_source = stores_source.replace(hr_samples_anchor, hr_samples_replacement, 1)
+
+hr_init_anchor = """    self.samples = Self.loadSamples(from: url)
+    prune(relativeTo: Date())
+"""
+hr_init_replacement = """    self.samples = Self.loadSamples(from: url)
+    prune(relativeTo: Date())
+    sampleIDs = Set(samples.map(\\.id))
+"""
+if stores_source.count(hr_init_anchor) < 1:
+    raise SystemExit("Could not locate heart-rate store initializer.")
+stores_source = stores_source.replace(hr_init_anchor, hr_init_replacement, 1)
+
+hr_append_anchor = """    samples.append(HeartRateSamplePoint(bpm: bpm, source: source, capturedAt: capturedAt))
+    prune(relativeTo: capturedAt)
+"""
+hr_append_replacement = """    let sample = HeartRateSamplePoint(bpm: bpm, source: source, capturedAt: capturedAt)
+    guard !sampleIDs.contains(sample.id) else {
+      stateLock.unlock()
+      return false
+    }
+    samples.append(sample)
+    sampleIDs.insert(sample.id)
+    let countBeforePrune = samples.count
+    prune(relativeTo: capturedAt)
+    if samples.count != countBeforePrune {
+      sampleIDs = Set(samples.map(\\.id))
+    }
+"""
+if stores_source.count(hr_append_anchor) != 1:
+    raise SystemExit("Could not uniquely locate live HR store append.")
+stores_source = stores_source.replace(hr_append_anchor, hr_append_replacement, 1)
+
+hr_historical = """  func appendHistorical(bpm: Int, source: String, capturedAt: Date) -> Bool {
+    guard (20...240).contains(bpm) else { return false }
+    stateLock.lock()
+    let sample = HeartRateSamplePoint(bpm: bpm, source: source, capturedAt: capturedAt)
+    guard !sampleIDs.contains(sample.id) else {
+      stateLock.unlock()
+      return false
+    }
+    let insertionIndex = samples.firstIndex(where: { $0.capturedAt > capturedAt }) ?? samples.endIndex
+    samples.insert(sample, at: insertionIndex)
+    sampleIDs.insert(sample.id)
+    let countBeforePrune = samples.count
+    prune(relativeTo: Date())
+    if samples.count != countBeforePrune {
+      sampleIDs = Set(samples.map(\\.id))
+    }
+    schedulePersist()
+    let shouldPostUpdate = markUpdateNotificationIfNeeded()
+    stateLock.unlock()
+    if shouldPostUpdate {
+      NotificationCenter.default.post(name: Self.didUpdateNotification, object: self)
+    }
+    return true
+  }
+
+"""
+if hr_historical not in stores_source:
+    hr_insert_anchor = """  func hourlyRanges(forDayContaining date: Date = Date(), calendar: Calendar = .current) -> [HeartRateHourlyRange] {
+"""
+    if stores_source.count(hr_insert_anchor) != 1:
+        raise SystemExit("Could not locate historical HR insertion point.")
+    stores_source = stores_source.replace(hr_insert_anchor, hr_historical + hr_insert_anchor, 1)
+
+# The second sample store is HRVSeriesStore.
+hrv_samples_anchor = """  private var samples: [HRVSamplePoint]
+  private var pendingWrite: DispatchWorkItem?
+"""
+hrv_samples_replacement = """  private var samples: [HRVSamplePoint]
+  private var sampleIDs: Set<String> = []
+  private var pendingWrite: DispatchWorkItem?
+"""
+if hrv_samples_replacement not in stores_source:
+    if stores_source.count(hrv_samples_anchor) != 1:
+        raise SystemExit("Could not locate HRV store sample state.")
+    stores_source = stores_source.replace(hrv_samples_anchor, hrv_samples_replacement, 1)
+
+hrv_init_anchor = """    prune(relativeTo: Date())
+  }
+
+  func append(rmssdMS: Double, rrIntervalCount: Int, source: String, capturedAt: Date) -> Bool {
+"""
+hrv_init_replacement = """    prune(relativeTo: Date())
+    sampleIDs = Set(samples.map(\\.id))
+  }
+
+  func append(rmssdMS: Double, rrIntervalCount: Int, source: String, capturedAt: Date) -> Bool {
+"""
+if hrv_init_replacement not in stores_source:
+    if stores_source.count(hrv_init_anchor) != 1:
+        raise SystemExit("Could not locate HRV store initializer.")
+    stores_source = stores_source.replace(hrv_init_anchor, hrv_init_replacement, 1)
+
+hrv_append_anchor = """    samples.append(HRVSamplePoint(rmssdMS: rmssdMS, rrIntervalCount: rrIntervalCount, source: source, capturedAt: capturedAt))
+    prune(relativeTo: capturedAt)
+"""
+hrv_append_replacement = """    let sample = HRVSamplePoint(rmssdMS: rmssdMS, rrIntervalCount: rrIntervalCount, source: source, capturedAt: capturedAt)
+    guard !sampleIDs.contains(sample.id) else {
+      stateLock.unlock()
+      return false
+    }
+    samples.append(sample)
+    sampleIDs.insert(sample.id)
+    let countBeforePrune = samples.count
+    prune(relativeTo: capturedAt)
+    if samples.count != countBeforePrune {
+      sampleIDs = Set(samples.map(\\.id))
+    }
+"""
+if stores_source.count(hrv_append_anchor) != 1:
+    raise SystemExit("Could not uniquely locate live HRV store append.")
+stores_source = stores_source.replace(hrv_append_anchor, hrv_append_replacement, 1)
+
+hrv_historical = """  func appendHistorical(rmssdMS: Double, rrIntervalCount: Int, source: String, capturedAt: Date) -> Bool {
+    guard rmssdMS.isFinite, (0...300).contains(rmssdMS), rrIntervalCount >= 2 else { return false }
+    stateLock.lock()
+    let sample = HRVSamplePoint(rmssdMS: rmssdMS, rrIntervalCount: rrIntervalCount, source: source, capturedAt: capturedAt)
+    guard !sampleIDs.contains(sample.id) else {
+      stateLock.unlock()
+      return false
+    }
+    let insertionIndex = samples.firstIndex(where: { $0.capturedAt > capturedAt }) ?? samples.endIndex
+    samples.insert(sample, at: insertionIndex)
+    sampleIDs.insert(sample.id)
+    let countBeforePrune = samples.count
+    prune(relativeTo: Date())
+    if samples.count != countBeforePrune {
+      sampleIDs = Set(samples.map(\\.id))
+    }
+    schedulePersist()
+    let shouldPostUpdate = markUpdateNotificationIfNeeded()
+    stateLock.unlock()
+    if shouldPostUpdate {
+      NotificationCenter.default.post(name: Self.didUpdateNotification, object: self)
+    }
+    return true
+  }
+
+"""
+if hrv_historical not in stores_source:
+    hrv_insert_anchor = """  func dailyEstimate(
+"""
+    if stores_source.count(hrv_insert_anchor) != 1:
+        raise SystemExit("Could not locate historical HRV insertion point.")
+    stores_source = stores_source.replace(hrv_insert_anchor, hrv_historical + hrv_insert_anchor, 1)
+
+prune_anchor = """  private func prune(relativeTo date: Date) {
+    let cutoff = date.addingTimeInterval(-Self.retention)
+    if let firstKept = samples.firstIndex(where: { $0.capturedAt >= cutoff }), firstKept > 0 {
+      samples.removeFirst(firstKept)
+    } else if samples.allSatisfy({ $0.capturedAt < cutoff }) {
+      samples.removeAll()
+    }
+    if samples.count > Self.maxSamples {
+      samples.removeFirst(samples.count - Self.maxSamples)
+    }
+  }
+"""
+prune_replacement = """  private func prune(relativeTo date: Date) {
+    let originalCount = samples.count
+    let cutoff = date.addingTimeInterval(-Self.retention)
+    if let firstKept = samples.firstIndex(where: { $0.capturedAt >= cutoff }), firstKept > 0 {
+      samples.removeFirst(firstKept)
+    } else if samples.allSatisfy({ $0.capturedAt < cutoff }) {
+      samples.removeAll()
+    }
+    if samples.count > Self.maxSamples {
+      samples.removeFirst(samples.count - Self.maxSamples)
+    }
+    if samples.count != originalCount {
+      sampleIDs = Set(samples.map(\\.id))
+    }
+  }
+"""
+if prune_replacement not in stores_source:
+    if stores_source.count(prune_anchor) != 2:
+        raise SystemExit("Expected both HR and HRV prune methods.")
+    stores_source = stores_source.replace(prune_anchor, prune_replacement)
+stores.write_text(stores_source)
+
 print("Applied WHOOP 5.0 data-channel dispatch and CRC-validated incremental frame reassembly.")
