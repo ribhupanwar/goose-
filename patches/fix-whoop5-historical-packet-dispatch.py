@@ -870,8 +870,13 @@ payload_match_anchor = """        PACKET_TYPE_REALTIME_DATA
         | PACKET_TYPE_REALTIME_RAW_DATA
         | PACKET_TYPE_HISTORICAL_DATA
 """
-payload_match_replacement = """        PACKET_TYPE_REALTIME_DATA => Some(parse_realtime_compact_hr_payload(payload)),
-        PACKET_TYPE_REALTIME_RAW_DATA
+payload_match_replacement = """        PACKET_TYPE_REALTIME_DATA
+            if payload.len() < 64 && payload.get(1) == Some(&2) =>
+        {
+            Some(parse_realtime_compact_hr_payload(payload))
+        }
+        PACKET_TYPE_REALTIME_DATA
+        | PACKET_TYPE_REALTIME_RAW_DATA
         | PACKET_TYPE_HISTORICAL_DATA
 """
 if payload_match_replacement not in protocol_source:
