@@ -61,15 +61,18 @@ commands.write_text(c)
 
 central = one("GooseBLEClient+CentralDelegate.swift")
 d = central.read_text()
-reset_anchor = """    clientHelloBootstrapScheduledForCurrentConnection = false
-    clientHelloResponseTimeoutWorkItem = nil
+reset_anchor = """    clientHelloSentForCurrentConnection = false
 """
-reset_replacement = reset_anchor + """    v5NotificationRegistrationScheduled.removeAll()
+reset_replacement = reset_anchor + """    clientHelloResponseConfirmedForCurrentConnection = false
+    clientHelloBootstrapScheduledForCurrentConnection = false
+    clientHelloResponseTimeoutWorkItem?.cancel()
+    clientHelloResponseTimeoutWorkItem = nil
+    v5NotificationRegistrationScheduled.removeAll()
 """
 if reset_replacement not in d:
-    if d.count(reset_anchor) != 1:
-        raise SystemExit("Could not locate per-connection notification registration reset.")
-    d = d.replace(reset_anchor, reset_replacement, 1)
+    if d.count(reset_anchor) != 2:
+        raise SystemExit("Could not locate both per-connection hello reset points.")
+    d = d.replace(reset_anchor, reset_replacement)
 central.write_text(d)
 
 print("Applied 600ms Gen5 notification registration settle delay.")
