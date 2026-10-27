@@ -358,6 +358,7 @@ client = one("GooseBLEClient.swift")
 client_source = client.read_text()
 hello_state_anchor = "  var clientHelloSentForCurrentConnection = false\n"
 hello_state_replacement = hello_state_anchor + """  var clientHelloResponseConfirmedForCurrentConnection = false
+  var clientHelloBootstrapScheduledForCurrentConnection = false
   var clientHelloResponseTimeoutWorkItem: DispatchWorkItem?
 """
 if "var clientHelloResponseConfirmedForCurrentConnection = false" not in client_source:
@@ -433,13 +434,35 @@ helper = """  func finishV5GattSetupIfNotificationsReady(_ peripheral: CBPeriphe
       return
     }
 
-    updateConnectionState("ready")
+    guard !clientHelloBootstrapScheduledForCurrentConnection else {
+      return
+    }
+    clientHelloBootstrapScheduledForCurrentConnection = true
+    updateConnectionState("settling")
     record(
       source: "ble",
       title: "gatt.required_notifications.ready",
-      body: "cmd_from,events,data reason=\\(reason)"
+      body: "cmd_from,events,data reason=\\(reason); waiting 500ms before GET_HELLO"
     )
-    sendClientHelloIfNeeded(reason: "required_notifications_ready")
+    // Edge's Gen5 bootstrap waits 500ms after the final CCC registration
+    // before its mandatory GET_HELLO exchange.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak peripheral] in
+      guard let self, let peripheral,
+            self.activePeripheral?.identifier == peripheral.identifier else {
+        return
+      }
+      let current = peripheral.services?.flatMap { $0.characteristics ?? [] } ?? []
+      let stillReady = requiredIDs.allSatisfy { id in
+        current.first(where: { $0.uuid == id })?.isNotifying == true
+      }
+      guard stillReady else {
+        self.clientHelloBootstrapScheduledForCurrentConnection = false
+        self.updateConnectionState("subscribing")
+        return
+      }
+      self.updateConnectionState("ready")
+      self.sendClientHelloIfNeeded(reason: "required_notifications_ready")
+    }
   }
 
 """
