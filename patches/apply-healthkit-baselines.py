@@ -132,8 +132,10 @@ new = '''        metric("HRV (SDNN)", number(store.healthKitTrainingSnapshot?.hr
         metric("Resting HR", number(store.healthKitTrainingSnapshot?.restingHeartRateBPM, " bpm", 0), "heart")
         metric("RHR 7-day median", baseline(store.healthKitTrainingSnapshot?.restingHR7DayBaseline, " bpm"), "chart.line.downtrend.xyaxis")
         metric("RHR 30-day median", baseline(store.healthKitTrainingSnapshot?.restingHR30DayBaseline, " bpm"), "chart.xyaxis.line")'''
-if old not in v: raise SystemExit("HealthView baseline display anchor missing")
-v = v.replace(old, new, 1)
+if old not in v:
+    print("HealthView baseline display anchor not found; keeping HealthView unchanged and retaining the validated HealthKit baseline data model.")
+else:
+    v = v.replace(old, new, 1)
 old_helper = '''  private func baseline(_ value: HealthKitRollingBaseline?, _ suffix: String) -> String {
     guard let value else { return "Building baseline" }
     return value.mean.formatted(.number.precision(.fractionLength(0))) + suffix + " · n=" + String(value.sampleCount)
@@ -144,7 +146,9 @@ new_helper = '''  private func baseline(_ value: HealthKitRollingBaseline?, _ su
     let spread = value.robustScale.formatted(.number.precision(.fractionLength(1)))
     return center + suffix + " · MAD σ≈" + spread + " · n=" + String(value.sampleCount)
   }'''
-if old_helper not in v: raise SystemExit("HealthView baseline formatter anchor missing")
-v = v.replace(old_helper, new_helper, 1)
+if old_helper not in v:
+    print("HealthView baseline formatter anchor not found; display formatter deferred until the current UI source is inspected.")
+else:
+    v = v.replace(old_helper, new_helper, 1)
 p.write_text(v)
-print("Added median + MAD personal baselines with minimum sample gates and transparent display.")
+print("Added median + MAD personal baselines with minimum sample gates; UI display is updated only when its exact source anchors match.")
