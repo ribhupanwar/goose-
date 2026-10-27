@@ -157,6 +157,16 @@ jobs:
             exit 1
           fi
 
+          # Embed a replaceable HealthKit capability template so SideStore/AltStore
+          # can discover and provision the entitlement when signing with the user's Apple ID.
+          ENTITLEMENTS="$GOOSE_SOURCE_ROOT/GooseSwift/GooseSwift.entitlements"
+          test -f "$ENTITLEMENTS"
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_PATH"
+          codesign -d --entitlements :- "$APP_PATH" 2>/dev/null | tee "$RUNNER_TEMP/goose-signed-entitlements.plist"
+          /usr/libexec/PlistBuddy -c "Print :com.apple.developer.healthkit" "$RUNNER_TEMP/goose-signed-entitlements.plist"
+          codesign --verify --deep --strict "$APP_PATH"
+
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           ditto "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/GooseSwift.app"
           (cd "$RUNNER_TEMP/ipa" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/GooseSwift-unsigned.ipa" Payload)
