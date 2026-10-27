@@ -51,7 +51,23 @@ calibration_source = Path(__file__).with_name("HealthKitReadinessCalibration.swi
 replace_once(
 '''/// Latest Apple Health values used as source signals, never as fabricated scores.
 struct HealthKitTrainingSnapshot: Codable {''',
-calibration_source + """\n\n/// A transparent readiness estimate; it is not a WHOOP proprietary score.\nstruct HealthKitRecoveryAssessment {\n  let score: Int\n  let hrvContribution: Int\n  let restingHRContribution: Int\n  let status: String\n  let confidence: String\n  let calibrationStatus: String\n  let calibrationNights: Int\n  let compositeZ: Double\n}\n\n/// Latest Apple Health values used as source signals, never as fabricated scores.\nstruct HealthKitTrainingSnapshot: Codable {''',\n"recovery assessment type")
+calibration_source + '''
+
+/// A transparent readiness estimate; it is not a WHOOP proprietary score.
+struct HealthKitRecoveryAssessment {
+  let score: Int
+  let hrvContribution: Int
+  let restingHRContribution: Int
+  let status: String
+  let confidence: String
+  let calibrationStatus: String
+  let calibrationNights: Int
+  let compositeZ: Double
+}
+
+/// Latest Apple Health values used as source signals, never as fabricated scores.
+struct HealthKitTrainingSnapshot: Codable {''',
+"recovery assessment type")
 replace_once(
 '''  let source: String
 
