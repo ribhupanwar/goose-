@@ -1075,7 +1075,7 @@ export_file.write_text(export_source)
 
 # Decode the Gen5 v18 historical HR/RR slots from Edge's confirmed offsets:
 # HR inner[14], RR count inner[15], up to four signed RR values at 16/18/20/22.
-# The compact bridge exposes these even when full-frame sampling is throttled.
+# HR is persisted now; RR stays raw until contiguous beat-time HRV is implemented.
 bridge = one("bridge.rs")
 bridge_source = bridge.read_text()
 heart_rate_map_anchor = """                Some(DataPacketBodySummary::RealtimeCompactHeartRate { heart_rate }) => *heart_rate,
@@ -1311,14 +1311,6 @@ heart_rate_handler_replacement = """    if let bpm = interpretation.heartRateBPM
           source: "whoop.gen5.history.v18",
           capturedAt: capturedAt
         )
-        if let rmssd = Self.rmssdMilliseconds(from: interpretation.rrIntervalsMs) {
-          HRVSeriesStore.shared.appendHistorical(
-            rmssdMS: rmssd,
-            rrIntervalCount: interpretation.rrIntervalsMs.count,
-            source: "whoop.gen5.history.v18.rr_rmssd_estimate",
-            capturedAt: capturedAt
-          )
-        }
       } else {
         let source = interpretation.heartRateSource ?? "rust.k10"
         ble.recordLiveHeartRate(bpm, source: source, at: event.capturedAt)
@@ -1337,24 +1329,9 @@ if heart_rate_handler_replacement not in pipeline_source:
         raise SystemExit("Could not locate parsed heart-rate persistence handler.")
     pipeline_source = pipeline_source.replace(heart_rate_handler_anchor, heart_rate_handler_replacement, 1)
 
-rmssd_helper = """  static func rmssdMilliseconds(from rrIntervals: [Int]) -> Double? {
-    guard rrIntervals.count >= 2 else { return nil }
-    var squaredDifferenceTotal = 0.0
-    for index in 1..<rrIntervals.count {
-      let difference = Double(rrIntervals[index] - rrIntervals[index - 1])
-      squaredDifferenceTotal += difference * difference
-    }
-    let value = sqrt(squaredDifferenceTotal / Double(rrIntervals.count - 1))
-    return value.isFinite && (0...300).contains(value) ? value : nil
-  }
-
-"""
-if rmssd_helper not in pipeline_source:
-    anchor = """  func handleParsedNotificationFrame(_ interpretation: NotificationFrameInterpretation, event: GooseNotificationEvent) {
-"""
-    if pipeline_source.count(anchor) != 1:
-        raise SystemExit("Could not locate notification frame handler insertion point.")
-    pipeline_source = pipeline_source.replace(anchor, rmssd_helper + anchor, 1)
+# Do not turn one-second RR fragments into RMSSD values. Edge computes
+# HRV from contiguous, timestamped beat series over longer windows; until
+# Goose has that same beat-time substrate, keep these RR values raw only.
 pipeline.write_text(pipeline_source)
 
 # The compact bridge needs the protocol packet constant for the Gen5 v18
