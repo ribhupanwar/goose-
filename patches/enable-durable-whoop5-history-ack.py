@@ -17,6 +17,8 @@ client = one("GooseBLEClient.swift")
 s = client.read_text()
 anchor = "  var pendingHistoryEndAckPayload: [UInt8]?\n"
 replacement = anchor + """  var pendingHistoricalBatchFrames: [Data] = []
+  var historicalExpectedPacketCount: Int?
+  var historicalBurstPacketCount = 0
   var historicalBatchCommitComplete = false
   var historicalBatchCommitInProgress = false
   var onHistoricalBatchCommit: (([Data], [UInt8], @escaping (Bool) -> Void) -> Void)?
@@ -33,7 +35,12 @@ h = handlers.read_text()
 anchor = """    switch packetType {
     case V5PacketType.commandResponse, V5PacketType.puffinCommandResponse:
 """
-replacement = """    if packetType != V5PacketType.commandResponse,
+replacement = """    // Edge's HISTORY_END.expected_count counts these frame types;
+    // IMU streams and metadata/command frames are not members.
+    if [47, 48, 50, 53, 54, 55].contains(Int(packetType)) {
+      historicalBurstPacketCount += 1
+    }
+    if packetType != V5PacketType.commandResponse,
        packetType != V5PacketType.puffinCommandResponse,
        packetType != V5PacketType.metadata,
        packetType != V5PacketType.puffinMetadata {
@@ -60,6 +67,8 @@ start_replacement = """    case .historyStart:
       historyEndAckSentThisBurst = false
       pendingHistoryEndAckPayload = nil
       pendingHistoricalBatchFrames.removeAll(keepingCapacity: true)
+      historicalExpectedPacketCount = nil
+      historicalBurstPacketCount = 0
       historicalBatchCommitComplete = false
       historicalBatchCommitInProgress = false
 """
@@ -77,6 +86,8 @@ complete_replacement = """    historyEndAckQueued = false
     historyEndAckSentThisBurst = false
     pendingHistoryEndAckPayload = nil
     pendingHistoricalBatchFrames.removeAll(keepingCapacity: true)
+    historicalExpectedPacketCount = nil
+    historicalBurstPacketCount = 0
     historicalBatchCommitComplete = false
     historicalBatchCommitInProgress = false
     historyStartReceived = false
@@ -85,6 +96,19 @@ if complete_replacement not in h:
     if h.count(complete_anchor) < 1:
         raise SystemExit("Could not locate historical completion/failure reset.")
     h = h.replace(complete_anchor, complete_replacement)
+end_anchor = """      pendingHistoryEndAckPayload = ackPayload
+      historyEndAckQueued = true
+"""
+end_replacement = """      pendingHistoryEndAckPayload = ackPayload
+      historicalExpectedPacketCount = payload.count >= 13
+        ? Int(UInt32(payload[9]) | (UInt32(payload[10]) << 8) | (UInt32(payload[11]) << 16) | (UInt32(payload[12]) << 24))
+        : nil
+      historyEndAckQueued = true
+"""
+if end_replacement not in h:
+    if h.count(end_anchor) != 1:
+        raise SystemExit("Could not locate HISTORY_END expected-count fields.")
+    h = h.replace(end_anchor, end_replacement, 1)
 handlers.write_text(h)
 
 # Every new transfer starts with an empty durable-batch state. ACK is enabled
@@ -122,13 +146,15 @@ gate = """    if historicalDataResultAckEnabled && !historicalBatchCommitComplet
         historyEndAckQueued = true
         return true
       }
-      guard historicalPacketsReceivedThisSync > 0,
-            !pendingHistoricalBatchFrames.isEmpty else {
+      guard let expected = historicalExpectedPacketCount else {
         historyEndAckQueued = false
-        if retryHistoricalTransferAfterIdleIfNeeded(reason: "history_end_without_data_\\(reason)") {
-          return true
-        }
-        failHistoricalSync("HISTORY_END arrived without historical data bodies; refusing to ACK an empty batch.")
+        failHistoricalSync("HISTORY_END did not contain a valid expected-packet count; refusing to ACK.")
+        return true
+      }
+      let actual = historicalBurstPacketCount
+      guard actual >= expected, expected == 0 || !pendingHistoricalBatchFrames.isEmpty else {
+        historyEndAckQueued = false
+        failHistoricalSync("HISTORY_END burst count shortfall: expected=\\(expected) received=\\(actual); refusing to ACK.")
         return true
       }
       guard let onHistoricalBatchCommit else {
