@@ -233,6 +233,27 @@ if fail_replacement not in cmd:
     cmd = cmd.replace(fail_anchor, fail_replacement, 1)
 commands.write_text(cmd)
 
+# A status=2 command response is pending, not terminal. Keep the same
+# sequence and timeout alive until the final SET_CLOCK response arrives.
+clock_handlers = handlers.read_text()
+pending_anchor = """    clockCommandTimeoutWorkItem?.cancel()
+    pendingClockCommand = nil
+    let resultCode = payload[4]
+"""
+pending_replacement = """    let resultCode = payload[4]
+    if resultCode == 2 {
+      record(level: .debug, source: "ble.clock", title: "clock.response.pending", body: "\\(pending.kind.name) seq=\\(pending.sequence)")
+      return
+    }
+    clockCommandTimeoutWorkItem?.cancel()
+    pendingClockCommand = nil
+"""
+if pending_replacement not in clock_handlers:
+    if clock_handlers.count(pending_anchor) != 1:
+        raise SystemExit("Could not locate clock response terminal-status handling.")
+    clock_handlers = clock_handlers.replace(pending_anchor, pending_replacement, 1)
+handlers.write_text(clock_handlers)
+
 # A SET_CLOCK response is correlated by opcode+sequence in handleClockCommandResponse.
 # Add readiness completion only after a successful response.
 h = handlers.read_text()
