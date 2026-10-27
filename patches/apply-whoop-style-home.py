@@ -1,8 +1,12 @@
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-home = root / "GooseSwift" / "HomeDashboardView.swift"
-score = root / "GooseSwift" / "HomeScoreViews.swift"
+home_matches = list(root.rglob("HomeDashboardView.swift"))
+score_matches = list(root.rglob("HomeScoreViews.swift"))
+if len(home_matches) != 1 or len(score_matches) != 1:
+    raise SystemExit(f"Expected one HomeDashboardView.swift and HomeScoreViews.swift; found {len(home_matches)} and {len(score_matches)}")
+home = home_matches[0]
+score = score_matches[0]
 
 home_text = home.read_text()
 score_text = score.read_text()
