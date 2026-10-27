@@ -57,10 +57,7 @@ replace_once(
       restingHeartRateBPM: rhr,''',
 "snapshot initialization")
 replace_once(
-'''  private static func rollingBaseline(
-    _ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit,
-    _ now: Date, _ days: Int, _ minimumSamples: Int
-  ) async -> HealthKitRollingBaseline? {''',
+'''  private static func latest(_ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit) async -> Double? {''',
 '''  private static func median(_ input: [Double]) -> Double? {
     guard !input.isEmpty else { return nil }
     let values = input.sorted()
@@ -74,8 +71,37 @@ replace_once(
   private static func rollingBaseline(
     _ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit,
     _ now: Date, _ days: Int, _ minimumSamples: Int
-  ) async -> HealthKitRollingBaseline? {''',
-"baseline median helper")
+  ) async -> HealthKitRollingBaseline? {
+    guard let type = HKObjectType.quantityType(forIdentifier: id) else { return nil }
+    let start = Calendar.current.date(byAdding: .day, value: -days, to: now) ?? now.addingTimeInterval(-Double(days) * 86400)
+    let predicate = HKQuery.predicateForSamples(withStart: start, end: now, options: [])
+    return await withCheckedContinuation { continuation in
+      let query = HKSampleQuery(
+        sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
+        sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
+      ) { _, samples, _ in
+        let values = (samples as? [HKQuantitySample] ?? []).map {
+          $0.quantity.doubleValue(for: unit)
+        }.filter { $0.isFinite && $0 > 0 }
+        guard values.count >= minimumSamples else {
+          continuation.resume(returning: nil)
+          return
+        }
+        guard let center = median(values),
+              let rawMAD = median(values.map { abs($0 - center) }) else {
+          continuation.resume(returning: nil)
+          return
+        }
+        continuation.resume(returning: HealthKitRollingBaseline(
+          median: center, mad: rawMAD, sampleCount: values.count, windowDays: days
+        ))
+      }
+      store.execute(query)
+    }
+  }
+
+  private static func latest(_ store: HKHealthStore, _ id: HKQuantityTypeIdentifier, _ unit: HKUnit) async -> Double? {''',
+"baseline query helper")
 replace_once(
 '''        let mean = values.reduce(0, +) / Double(values.count)
         continuation.resume(returning: HealthKitRollingBaseline(mean: mean, sampleCount: values.count, windowDays: days))''',
