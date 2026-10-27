@@ -35,16 +35,18 @@ h = handlers.read_text()
 anchor = """    switch packetType {
     case V5PacketType.commandResponse, V5PacketType.puffinCommandResponse:
 """
-replacement = """    // Edge's HISTORY_END.expected_count counts these frame types;
-    // IMU streams and metadata/command frames are not members.
-    if [47, 48, 50, 53, 54, 55].contains(Int(packetType)) {
-      historicalBurstPacketCount += 1
-    }
-    if packetType != V5PacketType.commandResponse,
-       packetType != V5PacketType.puffinCommandResponse,
-       packetType != V5PacketType.metadata,
-       packetType != V5PacketType.puffinMetadata {
-      pendingHistoricalBatchFrames.append(frame)
+replacement = """    if isHistoricalSyncing {
+      // Edge's HISTORY_END.expected_count counts these frame types;
+      // IMU streams and metadata/command frames are not members.
+      if [47, 48, 50, 53, 54, 55].contains(Int(packetType)) {
+        historicalBurstPacketCount += 1
+      }
+      if packetType != V5PacketType.commandResponse,
+         packetType != V5PacketType.puffinCommandResponse,
+         packetType != V5PacketType.metadata,
+         packetType != V5PacketType.puffinMetadata {
+        pendingHistoricalBatchFrames.append(frame)
+      }
     }
 
     switch packetType {
